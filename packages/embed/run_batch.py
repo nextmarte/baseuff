@@ -22,7 +22,7 @@ from uff_core.chunking import chunk_document
 from uff_core.schemas import Chunk, DocStatus, Document, Source
 from uff_embed.embedder import Bge
 from uff_embed.index import ensure_collection, upsert
-from uff_embed.router import needs_ocr, parse_smart
+from uff_embed.router import needs_ocr, parse_any
 
 CHUNKS_PER_DOC_STRIDE = 10_000
 
@@ -43,10 +43,13 @@ def _payload(doc: Document, chunk: Chunk) -> dict:
 def run(args: argparse.Namespace) -> None:
     data = Path(args.data)
     catalog = Catalog(str(data / "catalog.db"))
+    wanted = {Source(s) for s in args.sources.split(",")} if args.sources else None
     docs = [
         d
         for d in catalog.list_by_status(DocStatus.FETCHED)
-        if d.source is Source.BOLETIM and d.id is not None and d.id % args.num_shards == args.shard
+        if (wanted is None or d.source in wanted)
+        and d.id is not None
+        and d.id % args.num_shards == args.shard
     ]
     print(f"[batch] shard {args.shard}/{args.num_shards}: {len(docs)} documentos")
 
@@ -58,9 +61,10 @@ def run(args: argparse.Namespace) -> None:
     t_start = time.time()
     skipped = 0
     for n, doc in enumerate(docs, 1):
-        pdf = data / "raw" / doc.source.value / f"{doc.id}.pdf"
-        if not pdf.exists():
+        matches = list((data / "raw" / doc.source.value).glob(f"{doc.id}.*"))
+        if not matches:
             continue
+        path = matches[0]
         # Idempotência entre passadas: se o 1º chunk do doc já está no Qdrant, pula.
         if client.retrieve(args.collection, ids=[doc.id * CHUNKS_PER_DOC_STRIDE]):
             catalog.set_status(doc.id, DocStatus.INDEXED)
@@ -68,8 +72,8 @@ def run(args: argparse.Namespace) -> None:
             continue
         try:
             t0 = time.time()
-            used_ocr = needs_ocr(pdf)
-            text = parse_smart(pdf)
+            used_ocr = path.suffix.lower() == ".pdf" and needs_ocr(path)
+            text = parse_any(path)
             chunks = chunk_document(doc, text, target_chars=1200, overlap_chars=150)
             if not chunks:
                 catalog.set_status(doc.id, DocStatus.ERROR)
@@ -118,6 +122,7 @@ def main() -> None:
     ap.add_argument("--shard", type=int, default=0)
     ap.add_argument("--num-shards", type=int, default=2)
     ap.add_argument("--batch-size", type=int, default=16)
+    ap.add_argument("--sources", default=None, help="ex.: boletim,pesquisa (default: todas)")
     run(ap.parse_args())
 
 

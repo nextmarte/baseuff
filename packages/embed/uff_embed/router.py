@@ -57,3 +57,21 @@ def parse_smart(
     if ocr_fallback is not None and needs_ocr(path):
         return ocr_fallback(path)
     return extract_text(path)
+
+
+def extract_html(html: str) -> str:
+    """Extrai o conteúdo principal de uma página HTML (sem menu/rodapé)."""
+    import trafilatura
+
+    text = trafilatura.extract(html, include_comments=False) or ""
+    return text.strip()
+
+
+def parse_any(path: str | Path) -> str:
+    """Roteia pelo tipo do arquivo: PDF (híbrido) ou HTML (trafilatura)."""
+    p = Path(path)
+    if p.suffix.lower() == ".pdf":
+        return parse_smart(p)
+    if p.suffix.lower() in (".html", ".htm"):
+        return extract_html(p.read_text(encoding="utf-8", errors="replace"))
+    raise ValueError(f"formato não suportado: {p.suffix!r} ({p.name})")
