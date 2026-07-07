@@ -67,6 +67,7 @@ def build_index(data_dir: str) -> None:
         )
     print(f"[slice] total de pontos no índice: {point_id}")
     catalog.close()
+    client.close()  # storage local do Qdrant só admite uma instância por vez
 
 
 def run_query(data_dir: str, query: str, limit: int) -> None:
