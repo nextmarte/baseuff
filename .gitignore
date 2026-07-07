@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+dist/
+build/
+
+# UV
+# (uv.lock IS committed)
+
+# Testes / qualidade
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# Dados (nunca versionar acervo raspado nem índices)
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# Segredos / ambiente
+.env
+.env.*
+!.env.example
+
+# Modelos / caches de ML
+models/
+.cache/

@@ -1,0 +1,15 @@
+# Qdrant local para desenvolvimento/serving (host: ultron).
+#   docker compose -f docker/compose.yml up -d
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: baseuff-qdrant
+    ports:
+      - "6333:6333" # REST / dashboard em http://localhost:6333/dashboard
+      - "6334:6334" # gRPC
+    volumes:
+      - qdrant_storage:/qdrant/storage
+    restart: unless-stopped
+
+volumes:
+  qdrant_storage:
