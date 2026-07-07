@@ -54,3 +54,30 @@ class Document(BaseModel):
     last_modified: str | None = None
     status: DocStatus = DocStatus.DISCOVERED
     extra: dict[str, Any] = Field(default_factory=dict)
+
+
+class Chunk(BaseModel):
+    """Um trecho de um documento, pronto para vetorização.
+
+    ``context_prefix`` é o contexto de alta densidade (fonte, número, data, órgão)
+    prependido ao texto antes de embeddar (Contextual Retrieval), melhorando o
+    recall em corpora normativos.
+    """
+
+    doc_id: int | None = None
+    index: int
+    text: str
+    context_prefix: str | None = None
+    page: int | None = None
+    extra: dict[str, Any] = Field(default_factory=dict)
+
+    @property
+    def n_chars(self) -> int:
+        return len(self.text)
+
+    @property
+    def embedding_text(self) -> str:
+        """Texto efetivamente embeddado (prefixo contextual + trecho)."""
+        if self.context_prefix:
+            return f"{self.context_prefix}\n\n{self.text}"
+        return self.text
