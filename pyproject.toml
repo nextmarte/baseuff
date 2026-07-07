@@ -33,7 +33,7 @@ dev = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["packages"]
-addopts = "-q"
+addopts = "-q --import-mode=importlib"
 
 [tool.ruff]
 line-length = 100
