@@ -55,9 +55,15 @@ def run(args: argparse.Namespace) -> None:
 
     done = errors = ocr_count = 0
     t_start = time.time()
+    skipped = 0
     for n, doc in enumerate(docs, 1):
         pdf = data / "raw" / doc.source.value / f"{doc.id}.pdf"
         if not pdf.exists():
+            continue
+        # Idempotência entre passadas: se o 1º chunk do doc já está no Qdrant, pula.
+        if client.retrieve(args.collection, ids=[doc.id * CHUNKS_PER_DOC_STRIDE]):
+            catalog.set_status(doc.id, DocStatus.INDEXED)
+            skipped += 1
             continue
         try:
             t0 = time.time()
@@ -95,8 +101,8 @@ def run(args: argparse.Namespace) -> None:
 
     elapsed = (time.time() - t_start) / 60
     print(
-        f"[batch] FIM shard {args.shard}: ok={done} err={errors} ocr={ocr_count} "
-        f"em {elapsed:.1f}min"
+        f"[batch] FIM shard {args.shard}: ok={done} skip={skipped} err={errors} "
+        f"ocr={ocr_count} em {elapsed:.1f}min"
     )
     catalog.close()
 
