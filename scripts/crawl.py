@@ -18,6 +18,7 @@ from uff_core.config import Settings, sqlite_path
 from uff_ingest.connectors.atos import AtosNormativosConnector
 from uff_ingest.connectors.base import Connector
 from uff_ingest.connectors.boletim import BoletimConnector
+from uff_ingest.connectors.pesquisa import PesquisaConnector
 from uff_ingest.crawler import Crawler
 from uff_ingest.fetch import Fetcher
 
@@ -27,6 +28,8 @@ def build_connector(source: str, settings: Settings, start_year: int | None) -> 
         return BoletimConnector(start_year=start_year or settings.boletim_start_year)
     if source in ("atos", "resolucoes"):
         return AtosNormativosConnector()
+    if source == "pesquisa":
+        return PesquisaConnector()
     raise SystemExit(f"fonte não suportada ainda: {source!r}")
 
 
