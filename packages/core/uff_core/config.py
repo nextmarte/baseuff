@@ -28,11 +28,14 @@ class Settings(BaseSettings):
     max_concurrency: int = 4
     boletim_start_year: int = 2010
 
-    # Host de vetorização (skynet02) — sem senha; acesso por chave SSH
+    # Hosts de vetorização (skynet01/02) — sem senha; acesso por chave SSH
     embed_host: str = "cid-uff.net"
     embed_ssh_port: int = 22024
     embed_ssh_user: str = "marcus"
     embed_model: str = "BAAI/bge-m3"
+
+    # Microserviço de encoding de queries (BGE-M3 no host GPU)
+    encoder_url: str = "http://10.171.69.11:8010"
 
 
 def sqlite_path(dsn: str) -> str:

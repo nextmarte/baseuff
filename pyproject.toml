@@ -33,7 +33,9 @@ dev = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["packages"]
-addopts = "-q --import-mode=importlib"
+# embed não é membro do workspace (deps de GPU); seus testes rodam nos hosts GPU
+# ou localmente com: PYTHONPATH=packages/embed uv run --with pymupdf pytest packages/embed/tests
+addopts = "-q --import-mode=importlib --ignore=packages/embed"
 
 [tool.ruff]
 line-length = 100
