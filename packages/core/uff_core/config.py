@@ -10,9 +10,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(
-        env_prefix="UFF_", env_file=".env", extra="ignore"
-    )
+    model_config = SettingsConfigDict(env_prefix="UFF_", env_file=".env", extra="ignore")
 
     # Qdrant (serving)
     qdrant_url: str = "http://localhost:6333"

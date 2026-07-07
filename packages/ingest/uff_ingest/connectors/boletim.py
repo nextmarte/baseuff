@@ -31,8 +31,7 @@ class BoletimConnector:
 
     def index_urls(self) -> list[str]:
         return [
-            f"{BASE}/boletins/bs-{year}"
-            for year in range(self.start_year, self.current_year + 1)
+            f"{BASE}/boletins/bs-{year}" for year in range(self.start_year, self.current_year + 1)
         ]
 
     def parse_index(self, url: str, html: str) -> list[Document]:
@@ -54,9 +53,7 @@ class BoletimConnector:
     def _is_pdf(href: str) -> bool:
         return href.split("#", 1)[0].lower().endswith(".pdf")
 
-    def _to_document(
-        self, page_url: str, href: str, text: str, match: re.Match[str]
-    ) -> Document:
+    def _to_document(self, page_url: str, href: str, text: str, match: re.Match[str]) -> Document:
         numero = match.group("numero")
         publish_date = dt.datetime.strptime(match.group("data"), "%d/%m/%Y").date()
         abs_url = urljoin(page_url, href.split("#", 1)[0])

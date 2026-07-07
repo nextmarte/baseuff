@@ -145,9 +145,7 @@ class Catalog:
 
     @staticmethod
     def _from_row(row: sqlite3.Row) -> Document:
-        publish_date = (
-            dt.date.fromisoformat(row["publish_date"]) if row["publish_date"] else None
-        )
+        publish_date = dt.date.fromisoformat(row["publish_date"]) if row["publish_date"] else None
         return Document(
             id=row["id"],
             source=Source(row["source"]),
