@@ -12,6 +12,7 @@ upserts idempotentes. Vetores vão ao Qdrant do ultron via rede.
 from __future__ import annotations
 
 import argparse
+import gc
 import time
 from pathlib import Path
 
@@ -86,6 +87,8 @@ def run(args: argparse.Namespace) -> None:
             catalog.set_status(doc.id, DocStatus.INDEXED)
             done += 1
             ocr_count += int(used_ocr)
+            if n % 25 == 0:
+                gc.collect()  # hosts têm só 15GB de RAM; contém crescimento do heap
             if n % 10 == 0 or time.time() - t0 > 30:
                 rate = n / (time.time() - t_start)
                 eta_min = (len(docs) - n) / rate / 60 if rate > 0 else 0
