@@ -99,6 +99,32 @@ class Catalog:
         )
         self._conn.commit()
 
+    def record_fetch(
+        self,
+        doc_id: int,
+        *,
+        status: DocStatus,
+        checksum: str | None = None,
+        etag: str | None = None,
+        last_modified: str | None = None,
+        content_type: str | None = None,
+    ) -> None:
+        """Registra o resultado do download de um binário e move o status."""
+        self._conn.execute(
+            """
+            UPDATE documents SET
+                checksum      = COALESCE(?, checksum),
+                etag          = COALESCE(?, etag),
+                last_modified = COALESCE(?, last_modified),
+                content_type  = COALESCE(?, content_type),
+                status        = ?,
+                updated_at    = datetime('now')
+            WHERE id = ?
+            """,
+            (checksum, etag, last_modified, content_type, status.value, doc_id),
+        )
+        self._conn.commit()
+
     # -- leitura ---------------------------------------------------------------
 
     def get(self, doc_id: int) -> Document | None:
