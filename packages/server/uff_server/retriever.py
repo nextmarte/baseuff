@@ -120,6 +120,22 @@ def _result(score: float, payload: dict) -> SearchResult:
     )
 
 
+def _diversify(results: list[SearchResult], limit: int, max_per_doc: int) -> list[SearchResult]:
+    """Limita quantos trechos do MESMO documento entram no top-k (mais documentos
+    distintos), preservando a ordem; se faltar, completa com os que excederam o teto."""
+    counts: dict = {}
+    primary: list[SearchResult] = []
+    overflow: list[SearchResult] = []
+    for r in results:
+        n = counts.get(r.doc_id, 0)
+        if r.doc_id is not None and n < max_per_doc:
+            primary.append(r)
+            counts[r.doc_id] = n + 1
+        else:
+            overflow.append(r)
+    return (primary + overflow)[:limit]
+
+
 def retrieve(
     client: QdrantClient,
     collection: str,
@@ -133,15 +149,12 @@ def retrieve(
     k_rrf: int = 60,
     reranker=None,
     candidate_k: int | None = None,
+    max_per_doc: int = 2,
 ) -> list[SearchResult]:
     """Busca híbrida (denso+esparso, RRF) com filtros opcionais de fonte e período.
     Se ``reranker`` for dado, faz over-fetch de ``candidate_k`` candidatos e reordena
-    pelo cross-encoder (mais preciso no topo)."""
-    fetch = candidate_k if (reranker is not None and candidate_k) else limit
-    if reranker is not None and not candidate_k:
-        # over-fetch enxuto: reranquear ~24 candidatos mantém a qualidade e corta a
-        # latência (o cross-encoder custa ~40ms/par; 80 candidatos = ~3s).
-        fetch = max(limit * 4, 24)
+    pelo cross-encoder. ``max_per_doc`` diversifica: no máx. N trechos por documento."""
+    fetch = candidate_k if (reranker is not None and candidate_k) else max(limit * 4, 24)
 
     qv = encoder.encode_query(query)
     query_filter = _build_filter(source=source, date_from=date_from, date_to=date_to)
@@ -166,17 +179,17 @@ def retrieve(
     candidates = [_result(sc, payloads[pid]) for pid, sc in ordered]
 
     if reranker is None:
-        return candidates[:limit]
+        return _diversify(candidates, limit, max_per_doc)
 
     rerank_scores = reranker.rerank(query, [c.text for c in candidates])
     reranked = sorted(
         zip(candidates, rerank_scores, strict=False), key=lambda cs: cs[1], reverse=True
     )
-    top: list[SearchResult] = []
-    for cand, rs in reranked[:limit]:
+    ranked: list[SearchResult] = []
+    for cand, rs in reranked:
         cand.score = float(rs)
-        top.append(cand)
-    return top
+        ranked.append(cand)
+    return _diversify(ranked, limit, max_per_doc)
 
 
 def dossier(
