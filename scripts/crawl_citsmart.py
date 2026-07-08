@@ -55,7 +55,7 @@ def _event(req, method: str, **params):
         "parm3": method,
         **{k: str(v) for k, v in params.items()},
     }
-    resp = req.post(KB_EVENT, form=form)
+    resp = req.post(KB_EVENT, form=form, timeout=30000)
     return _parse_callback(resp.text())
 
 
@@ -76,6 +76,7 @@ def _folder_tree(req) -> list[dict]:
         f"{BASE}/rest/citajax/folder/findFolderUserCanAccess",
         data=json.dumps({"realUrl": "/citsmart/folder/folder.load"}),
         headers={"Content-Type": "application/json"},
+        timeout=30000,
     )
     return resp.json()
 
@@ -104,7 +105,9 @@ def run(limit: int | None, data_dir: str, catalog: Catalog) -> None:
         browser = p.chromium.launch(headless=True)
         ctx = browser.new_context(ignore_https_errors=True)
         page = ctx.new_page()
-        page.goto(PORTAL, wait_until="networkidle", timeout=60000)
+        # "load" (não "networkidle"): o portal tem heartbeat periódico e a rede
+        # nunca fica ociosa, o que penduraria o goto indefinidamente.
+        page.goto(PORTAL, wait_until="load", timeout=45000)
         req = ctx.request
 
         folders = _folder_tree(req)
@@ -119,6 +122,7 @@ def run(limit: int | None, data_dir: str, catalog: Catalog) -> None:
         first = _list_folder(req, root, 1)
         total = first.get("total", 0)
         pages = math.ceil(total / 10) or 1
+        print(f"[citsmart] paginando inventário: {pages} páginas (~{total} artigos)", flush=True)
         inventory: dict[int, dict] = {}
         for sp in range(1, pages + 1):
             page_data = first if sp == 1 else _list_folder(req, root, sp)
@@ -126,7 +130,9 @@ def run(limit: int | None, data_dir: str, catalog: Catalog) -> None:
                 aid = art.get("idBaseConhecimento")
                 if aid:
                     inventory.setdefault(aid, art)
-        print(f"[citsmart] inventário: {len(inventory)} artigos (total reportado {total})")
+            if sp % 20 == 0:
+                print(f"[citsmart]   página {sp}/{pages} ({len(inventory)} únicos)", flush=True)
+        print(f"[citsmart] inventário: {len(inventory)} de ~{total} artigos", flush=True)
 
         # 2) buscar conteúdo e salvar
         saved = errors = 0
