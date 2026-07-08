@@ -1,4 +1,11 @@
-from uff_server.auth import extract_bearer, is_authorized, load_tokens
+from uff_server.auth import extract_bearer, is_authorized, load_token_agents, load_tokens
+
+
+def test_load_token_agents_maps_token_to_agent(tmp_path):
+    f = tmp_path / "toks.txt"
+    f.write_text("# comentário\nhermes   AAA\nbxat  BBB\nsozinho\n", encoding="utf-8")
+    # linha sem par (só token) não vira agente nomeado
+    assert load_token_agents(str(f)) == {"AAA": "hermes", "BBB": "bxat"}
 
 
 def test_extract_bearer_variants():

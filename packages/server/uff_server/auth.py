@@ -8,11 +8,17 @@ também mantém a autenticação mesmo se o MCP for exposto por outro caminho.
 
 from __future__ import annotations
 
+import contextvars
 from collections.abc import Callable
 from pathlib import Path
 
 from starlette.responses import HTMLResponse, JSONResponse
 from starlette.types import Receive, Scope, Send
+
+# Agente da requisição corrente (setado pelo middleware, lido pelas tools ao logar).
+current_agent: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "current_agent", default="desconhecido"
+)
 
 
 def extract_bearer(authorization: str) -> str:
@@ -36,6 +42,22 @@ def load_tokens(path: str) -> set[str]:
         fields = line.split()
         tokens.add(fields[1] if len(fields) >= 2 else fields[0])
     return tokens
+
+
+def load_token_agents(path: str) -> dict[str, str]:
+    """Mapa token→agente (linhas ``agente  token``). Linhas com só um campo são ignoradas."""
+    p = Path(path)
+    if not p.exists():
+        return {}
+    agents: dict[str, str] = {}
+    for raw in p.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        fields = line.split()
+        if len(fields) >= 2:
+            agents[fields[1]] = fields[0]
+    return agents
 
 
 def is_authorized(authorization: str, tokens: set[str]) -> bool:
@@ -64,6 +86,7 @@ class BearerAuthMiddleware:
         self.html_renderer = html_renderer
         self._mtime = -1.0
         self._tokens: set[str] = set()
+        self._agents: dict[str, str] = {}
         self._refresh()
 
     def _refresh(self) -> None:
@@ -73,6 +96,7 @@ class BearerAuthMiddleware:
             mtime = 0.0
         if mtime != self._mtime:
             self._tokens = load_tokens(self.token_path)
+            self._agents = load_token_agents(self.token_path)
             self._mtime = mtime
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
@@ -105,4 +129,6 @@ class BearerAuthMiddleware:
             )
             await response(scope, receive, send)
             return
+        # identifica o agente para o log de consultas (propaga via contextvar)
+        current_agent.set(self._agents.get(extract_bearer(authorization), "desconhecido"))
         await self.app(scope, receive, send)

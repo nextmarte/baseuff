@@ -9,11 +9,13 @@ Liga o FastMCP ao Qdrant local e ao encoder remoto no host GPU:
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 
 import uvicorn
 from qdrant_client import QdrantClient
 from uff_core.catalog import Catalog
 from uff_core.config import Settings, sqlite_path
+from uff_core.querylog import QueryLog
 from uff_server.app import build_docs, create_app, render_docs_html
 from uff_server.auth import BearerAuthMiddleware
 from uff_server.encoder import RemoteEncoder
@@ -39,8 +41,11 @@ def main() -> None:
         ColbertReranker(settings.encoder_url), RemoteReranker(settings.encoder_url)
     )
     catalog = Catalog(sqlite_path(settings.catalog_dsn))
+    querylog = QueryLog(str(Path(settings.data_dir) / "queries.db"))
     collection = settings.qdrant_collection
-    mcp = create_app(client, collection, encoder, reranker=reranker, catalog=catalog)
+    mcp = create_app(
+        client, collection, encoder, reranker=reranker, catalog=catalog, querylog=querylog
+    )
 
     if args.http:
         # Tools protegidas por auth Bearer; documentação pública em GET /mcp/docs.

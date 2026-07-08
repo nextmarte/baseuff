@@ -7,9 +7,12 @@ cliente entenda exatamente o que a base contém e como consultá-la.
 
 from __future__ import annotations
 
+import time
+
 from fastmcp import FastMCP
 from qdrant_client import QdrantClient, models
 
+from .auth import current_agent
 from .retriever import QueryEncoder, dossier, get_document, retrieve, snippet_around
 
 SOURCES = {
@@ -250,8 +253,23 @@ def create_app(
     encoder: QueryEncoder,
     reranker=None,
     catalog=None,
+    querylog=None,
 ) -> FastMCP:
     mcp: FastMCP = FastMCP("BaseUFF", instructions=INSTRUCTIONS)
+
+    def _record(tool: str, query: str, t0: float, n_results: int, **extra) -> None:
+        if querylog is None:
+            return
+        querylog.log(
+            {
+                "agent": current_agent.get(),
+                "tool": tool,
+                "query": query,
+                "n_results": n_results,
+                "latency_ms": round((time.perf_counter() - t0) * 1000),
+                **extra,
+            }
+        )
 
     @mcp.tool
     def search(
@@ -275,6 +293,7 @@ def create_app(
 
         Retorna [{doc_id, numero, source, publish_date, url, snippet, score}] por relevância.
         """
+        t0 = time.perf_counter()
         results = retrieve(
             client,
             collection,
@@ -286,7 +305,7 @@ def create_app(
             date_to=date_to,
             reranker=reranker,
         )
-        return [
+        out = [
             {
                 "doc_id": r.doc_id,
                 "numero": r.numero,
@@ -298,6 +317,17 @@ def create_app(
             }
             for r in results
         ]
+        _record(
+            "search",
+            query,
+            t0,
+            len(out),
+            source=source,
+            date_from=date_from,
+            date_to=date_to,
+            top_results=[{"doc_id": r["doc_id"], "score": r["score"]} for r in out[:3]],
+        )
+        return out
 
     @mcp.tool
     def dossie(nome: str, source: str | None = "boletim") -> dict:
@@ -313,7 +343,18 @@ def create_app(
 
         Retorna {nome, total, documentos: [{numero, source, publish_date, url, snippet}]}.
         """
+        t0 = time.perf_counter()
         docs = dossier(client, collection, nome, source=source)
+        _record(
+            "dossie",
+            nome,
+            t0,
+            len(docs),
+            source=source,
+            top_results=[
+                {"numero": d["numero"], "publish_date": d["publish_date"]} for d in docs[:3]
+            ],
+        )
         return {"nome": nome, "total": len(docs), "documentos": docs}
 
     @mcp.tool
@@ -325,7 +366,10 @@ def create_app(
         Prefira `doc_id` (único, vem nos resultados de `search`). `numero` pode ser ambíguo
         entre anos. Retorna {doc_id, source, numero, publish_date, url, n_chunks, texto} ou null.
         """
-        return get_document(client, collection, doc_id=doc_id, numero=numero, source=source)
+        t0 = time.perf_counter()
+        doc = get_document(client, collection, doc_id=doc_id, numero=numero, source=source)
+        _record("get_documento", str(doc_id or numero), t0, 1 if doc else 0, source=source)
+        return doc
 
     @mcp.tool
     def info() -> dict:
