@@ -72,7 +72,9 @@ def _rank(hits, expected: list[str]) -> int | None:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--rerank", action="store_true")
+    ap.add_argument("--rerank", action="store_true", help="cross-encoder (BGE-reranker)")
+    ap.add_argument("--colbert", action="store_true", help="late-interaction ColBERT (MaxSim)")
+    ap.add_argument("--cascade", action="store_true", help="ColBERT -> cross-encoder (recomendado)")
     ap.add_argument("--limit", type=int, default=TOP_K)
     args = ap.parse_args()
 
@@ -80,11 +82,23 @@ def main() -> None:
     client = QdrantClient(url=s.qdrant_url, timeout=30)
     encoder = RemoteEncoder(s.encoder_url)
     reranker = None
-    if args.rerank:
+    if args.cascade:
+        from uff_server.reranker import CascadeReranker, ColbertReranker, RemoteReranker
+
+        reranker = CascadeReranker(ColbertReranker(s.encoder_url), RemoteReranker(s.encoder_url))
+        label = "CASCATA (ColBERT -> cross-encoder)"
+    elif args.colbert:
+        from uff_server.reranker import ColbertReranker
+
+        reranker = ColbertReranker(s.encoder_url)
+        label = "COM COLBERT (late-interaction)"
+    elif args.rerank:
         from uff_server.reranker import RemoteReranker
 
         reranker = RemoteReranker(s.encoder_url)
-    label = "COM RERANKER" if args.rerank else "BASELINE (híbrido)"
+        label = "COM RERANKER (cross-encoder)"
+    else:
+        label = "BASELINE (híbrido)"
     print(f"### {label} ###")
 
     ranks: list[int | None] = []

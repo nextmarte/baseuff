@@ -49,3 +49,30 @@ class Bge:
 
     def encode_query(self, text: str, max_length: int = 512) -> Encoded:
         return self.encode([text], batch_size=1, max_length=max_length)[0]
+
+    def colbert_scores(
+        self, query: str, passages: list[str], max_length: int = 512
+    ) -> list[float]:
+        """Reranking por late-interaction (ColBERT): MaxSim entre os vetores-token da
+        query e de cada passagem. Nativo do BGE-M3 (return_colbert_vecs); tudo na GPU.
+        Score = média_i(max_j(q_i · p_j)) — normalizado pelo nº de tokens da query."""
+        if not passages:
+            return []
+        import numpy as np
+
+        out = self.model.encode(
+            [query, *passages],
+            batch_size=min(len(passages) + 1, 32),
+            max_length=max_length,
+            return_dense=False,
+            return_sparse=False,
+            return_colbert_vecs=True,
+        )
+        vecs = out["colbert_vecs"]
+        q = np.asarray(vecs[0], dtype=np.float32)  # (mq, dim)
+        scores: list[float] = []
+        for p in vecs[1:]:
+            p = np.asarray(p, dtype=np.float32)  # (np, dim)
+            sim = q @ p.T  # (mq, np)
+            scores.append(float(sim.max(axis=1).mean()))  # MaxSim médio por token de query
+        return scores

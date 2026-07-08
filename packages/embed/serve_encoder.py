@@ -59,3 +59,9 @@ def encode(req: EncodeRequest) -> dict:
 @app.post("/rerank")
 def rerank(req: RerankRequest) -> dict:
     return {"scores": _rr().scores(req.query, req.passages)}
+
+
+@app.post("/colbert_rerank")
+def colbert_rerank(req: RerankRequest) -> dict:
+    # late-interaction (MaxSim) usando o próprio BGE-M3 já carregado (sem 2º modelo)
+    return {"scores": _model().colbert_scores(req.query, req.passages)}

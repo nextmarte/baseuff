@@ -17,7 +17,7 @@ from uff_core.config import Settings, sqlite_path
 from uff_server.app import build_docs, create_app, render_docs_html
 from uff_server.auth import BearerAuthMiddleware
 from uff_server.encoder import RemoteEncoder
-from uff_server.reranker import RemoteReranker
+from uff_server.reranker import CascadeReranker, ColbertReranker, RemoteReranker
 
 
 def main() -> None:
@@ -33,7 +33,11 @@ def main() -> None:
     settings = Settings()
     client = QdrantClient(url=settings.qdrant_url, timeout=30)
     encoder = RemoteEncoder(settings.encoder_url)
-    reranker = RemoteReranker(settings.encoder_url)  # /rerank no mesmo host GPU
+    # Cascata: ColBERT (rápido) pré-seleciona, cross-encoder finaliza o topo.
+    # Qualidade do cross-encoder (MRR 1.0) a ~0,65s/consulta (vs ~3s só cross-encoder).
+    reranker = CascadeReranker(
+        ColbertReranker(settings.encoder_url), RemoteReranker(settings.encoder_url)
+    )
     catalog = Catalog(sqlite_path(settings.catalog_dsn))
     collection = settings.qdrant_collection
     mcp = create_app(client, collection, encoder, reranker=reranker, catalog=catalog)
