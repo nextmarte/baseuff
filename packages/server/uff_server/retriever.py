@@ -60,6 +60,18 @@ def _leg(client, collection, query, using, limit, query_filter):
     ).points
 
 
+def _result(score: float, payload: dict) -> SearchResult:
+    return SearchResult(
+        score=score,
+        doc_id=payload.get("doc_id"),
+        source=payload.get("source"),
+        numero=payload.get("numero"),
+        publish_date=payload.get("publish_date"),
+        url=payload.get("url"),
+        text=payload.get("text", ""),
+    )
+
+
 def retrieve(
     client: QdrantClient,
     collection: str,
@@ -69,16 +81,24 @@ def retrieve(
     limit: int = 5,
     source: str | None = None,
     k_rrf: int = 60,
+    reranker=None,
+    candidate_k: int | None = None,
 ) -> list[SearchResult]:
+    """Busca híbrida (denso+esparso, RRF). Se ``reranker`` for dado, faz over-fetch
+    de ``candidate_k`` candidatos e reordena pelo cross-encoder (mais preciso no topo)."""
+    fetch = candidate_k if (reranker is not None and candidate_k) else limit
+    if reranker is not None and not candidate_k:
+        fetch = max(limit * 8, 40)
+
     qv = encoder.encode_query(query)
     query_filter = _source_filter(source)
-    dense = _leg(client, collection, qv.dense, "dense", limit * 4, query_filter)
+    dense = _leg(client, collection, qv.dense, "dense", fetch * 4, query_filter)
     sparse = _leg(
         client,
         collection,
         models.SparseVector(indices=qv.sparse_indices, values=qv.sparse_values),
         "sparse",
-        limit * 4,
+        fetch * 4,
         query_filter,
     )
 
@@ -89,19 +109,18 @@ def retrieve(
             scores[point.id] = scores.get(point.id, 0.0) + 1.0 / (k_rrf + rank + 1)
             payloads[point.id] = point.payload or {}
 
-    ordered = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)[:limit]
-    results: list[SearchResult] = []
-    for pid, score in ordered:
-        p = payloads[pid]
-        results.append(
-            SearchResult(
-                score=score,
-                doc_id=p.get("doc_id"),
-                source=p.get("source"),
-                numero=p.get("numero"),
-                publish_date=p.get("publish_date"),
-                url=p.get("url"),
-                text=p.get("text", ""),
-            )
-        )
-    return results
+    ordered = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)[:fetch]
+    candidates = [_result(sc, payloads[pid]) for pid, sc in ordered]
+
+    if reranker is None:
+        return candidates[:limit]
+
+    rerank_scores = reranker.rerank(query, [c.text for c in candidates])
+    reranked = sorted(
+        zip(candidates, rerank_scores, strict=False), key=lambda cs: cs[1], reverse=True
+    )
+    top: list[SearchResult] = []
+    for cand, rs in reranked[:limit]:
+        cand.score = float(rs)
+        top.append(cand)
+    return top

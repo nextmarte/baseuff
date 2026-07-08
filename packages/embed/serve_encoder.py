@@ -11,9 +11,11 @@ from __future__ import annotations
 from fastapi import FastAPI
 from pydantic import BaseModel
 from uff_embed.embedder import Bge
+from uff_embed.reranker import Reranker
 
-app = FastAPI(title="BaseUFF encoder")
+app = FastAPI(title="BaseUFF encoder+reranker")
 _bge: Bge | None = None
+_reranker: Reranker | None = None
 
 
 def _model() -> Bge:
@@ -23,8 +25,20 @@ def _model() -> Bge:
     return _bge
 
 
+def _rr() -> Reranker:
+    global _reranker
+    if _reranker is None:
+        _reranker = Reranker()
+    return _reranker
+
+
 class EncodeRequest(BaseModel):
     text: str
+
+
+class RerankRequest(BaseModel):
+    query: str
+    passages: list[str]
 
 
 @app.get("/healthz")
@@ -40,3 +54,8 @@ def encode(req: EncodeRequest) -> dict:
         "sparse_indices": enc.sparse_indices,
         "sparse_values": enc.sparse_values,
     }
+
+
+@app.post("/rerank")
+def rerank(req: RerankRequest) -> dict:
+    return {"scores": _rr().scores(req.query, req.passages)}
