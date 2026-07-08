@@ -8,6 +8,7 @@ também mantém a autenticação mesmo se o MCP for exposto por outro caminho.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 from starlette.responses import JSONResponse
@@ -48,9 +49,17 @@ class BearerAuthMiddleware:
     Recarrega o arquivo de tokens quando muda (onboard de agente sem reiniciar).
     """
 
-    def __init__(self, app, token_path: str) -> None:
+    def __init__(
+        self,
+        app,
+        token_path: str,
+        docs_provider: Callable[[], dict] | None = None,
+        docs_path: str = "/mcp/docs",
+    ) -> None:
         self.app = app
         self.token_path = token_path
+        self.docs_provider = docs_provider
+        self.docs_path = docs_path
         self._mtime = -1.0
         self._tokens: set[str] = set()
         self._refresh()
@@ -67,6 +76,14 @@ class BearerAuthMiddleware:
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
+            return
+        # Documentação pública (sem auth): GET no docs_path.
+        if (
+            self.docs_provider is not None
+            and scope.get("method") == "GET"
+            and scope.get("path", "").rstrip("/") == self.docs_path.rstrip("/")
+        ):
+            await JSONResponse(self.docs_provider())(scope, receive, send)
             return
         self._refresh()
         headers = dict(scope.get("headers") or [])

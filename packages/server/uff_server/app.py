@@ -50,11 +50,84 @@ INSTRUCTIONS = (
 )
 
 
+POSSIBILIDADES = [
+    "Levantar TODOS os atos de um servidor/professor (progressões, promoções, designações, "
+    "licenças, diárias, aposentadoria) — busque o nome completo em source='boletim'.",
+    "Obter o texto de uma portaria/resolução pelo número (ex.: 'Resolução CEPEx 3.779').",
+    "Aprender o passo a passo de um sistema da UFF (ex.: 'como preencher o RAD', 'registrar "
+    "diploma') em source='sti_kb' — inclui texto das telas (OCR).",
+    "Consultar editais e bolsas de pesquisa (PIBIC, iniciação científica) em source='pesquisa'.",
+    "Buscar por tema livre (ex.: 'convênio', 'afastamento no exterior') em todo o acervo.",
+]
+
+EXEMPLOS = [
+    {
+        "objetivo": "atos de um professor",
+        "chamada": "search('Eduardo Camilo da Silva', source='boletim', limit=10)",
+    },
+    {
+        "objetivo": "como usar o sistema RAD",
+        "chamada": "search('preencher RAD atividades de ensino', source='sti_kb')",
+    },
+    {
+        "objetivo": "edital PIBIC",
+        "chamada": "search('edital PIBIC bolsa de iniciação científica', source='pesquisa')",
+    },
+]
+
+
+def build_docs(client: QdrantClient, collection: str, catalog=None) -> dict:
+    """Documentação e dimensão do acervo (ao vivo). Pública, sem auth."""
+    chunks: dict[str, int] = {}
+    for src in SOURCES:
+        chunks[src] = client.count(
+            collection,
+            count_filter=models.Filter(
+                must=[models.FieldCondition(key="source", match=models.MatchValue(value=src))]
+            ),
+        ).count
+
+    cat = catalog.stats() if catalog is not None else {}
+    acervo = {}
+    for src, descricao in SOURCES.items():
+        c = cat.get(src, {})
+        acervo[src] = {
+            "tipo": descricao,
+            "documentos": c.get("documentos"),
+            "trechos_indexados": chunks[src],
+            "periodo": [c.get("data_inicial"), c.get("data_final")],
+        }
+
+    total_docs = sum(v["documentos"] or 0 for v in acervo.values())
+    return {
+        "servidor": "BaseUFF — RAG sobre o acervo aberto da Universidade Federal Fluminense",
+        "instructions": INSTRUCTIONS,
+        "acervo": acervo,
+        "tamanho": {
+            "total_documentos": total_docs,
+            "total_trechos_indexados": client.count(collection).count,
+        },
+        "possibilidades": POSSIBILIDADES,
+        "exemplos": EXEMPLOS,
+        "tools": {
+            "search": "search(query, limit=5, source=None) -> passagens com citação",
+            "info": "info() -> esta documentação + dimensão do acervo",
+        },
+        "nao_inclui": [
+            "SIAPE/SiapeNet e sistemas internos",
+            "dados financeiros detalhados",
+            "cadastro de servidores / dados pessoais não publicados",
+        ],
+        "autenticacao": "as tools exigem header Authorization: Bearer <token>; esta doc é pública",
+    }
+
+
 def create_app(
     client: QdrantClient,
     collection: str,
     encoder: QueryEncoder,
     reranker=None,
+    catalog=None,
 ) -> FastMCP:
     mcp: FastMCP = FastMCP("BaseUFF", instructions=INSTRUCTIONS)
 
@@ -92,29 +165,6 @@ def create_app(
     def info() -> dict:
         """Documentação do servidor: fontes, o que cada uma contém, cobertura ATUAL
         (contagem de trechos por fonte) e limitações. Chame isto para saber o que a base oferece."""
-        counts: dict[str, int] = {}
-        for src in SOURCES:
-            counts[src] = client.count(
-                collection,
-                count_filter=models.Filter(
-                    must=[models.FieldCondition(key="source", match=models.MatchValue(value=src))]
-                ),
-            ).count
-        return {
-            "servidor": "BaseUFF — RAG sobre o acervo aberto da UFF",
-            "fontes": SOURCES,
-            "trechos_indexados_por_fonte": counts,
-            "total_trechos": client.count(collection).count,
-            "tools": {
-                "search": "search(query, limit=5, source=None) -> passagens com citação",
-                "info": "info() -> esta documentação + cobertura",
-            },
-            "citacao": "cada resultado traz numero, data (publish_date) e url do PDF/página",
-            "nao_inclui": [
-                "SIAPE/SiapeNet e sistemas internos",
-                "dados financeiros detalhados",
-                "cadastro de servidores / dados pessoais não publicados",
-            ],
-        }
+        return build_docs(client, collection, catalog)
 
     return mcp

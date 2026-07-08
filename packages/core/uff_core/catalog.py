@@ -150,6 +150,21 @@ class Catalog:
     def count(self) -> int:
         return int(self._conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0])
 
+    def stats(self) -> dict[str, dict]:
+        """Resumo do acervo por fonte: nº de documentos e período (min/max publish_date)."""
+        rows = self._conn.execute(
+            "SELECT source, COUNT(*) n, MIN(publish_date) mn, MAX(publish_date) mx "
+            "FROM documents GROUP BY source ORDER BY source"
+        ).fetchall()
+        return {
+            r["source"]: {
+                "documentos": r["n"],
+                "data_inicial": r["mn"],
+                "data_final": r["mx"],
+            }
+            for r in rows
+        }
+
     # -- (de)serialização ------------------------------------------------------
 
     @staticmethod
