@@ -80,6 +80,20 @@ pula documentos cujo 1º chunk já existe no Qdrant. Reexecutar processa só o d
   ⚠️ **Pegadinha deste servidor:** `sites-enabled/` contém **cópias** dos vhosts (não symlinks) —
   editar o arquivo em `sites-enabled/` e recarregar. Ver `deploy/EXPOSICAO.md`.
 
+## Base de consultas (gestão de qualidade + pesquisa)
+
+Cada chamada de tool de busca (`search`/`dossie`/`get_documento`) é registrada em
+`data/queries.db` (SQLite/WAL, `uff_core/querylog.py`): timestamp, **agente** (resolvido do
+token via `auth.current_agent`, propagado por contextvar), tool, query, filtros, nº de
+resultados, latência e o topo dos resultados. `info()` (público) não é registrado.
+
+- **Thread-safe:** grava com conexão nova por escrita (as tools rodam em worker threads).
+- **Analytics:** `uv run python scripts/query_stats.py` — uso por tool/agente/fonte/dia,
+  latência p50/p95, top queries e **lacunas** (dossiê/doc sem resultado + buscas cujo melhor
+  score de reranker ficou baixo → sinal de conteúdo faltante). `--anon` anonimiza agentes.
+- **Privacidade:** a base fica só no ultron (ambiente privado); para publicação/paper,
+  usar apenas agregados anonimizados (queries podem conter nomes de pessoas).
+
 ## Operação
 
 - **Serviços persistentes:** Qdrant (docker restart) · `baseuff-mcp` e `baseuff-encoder`
