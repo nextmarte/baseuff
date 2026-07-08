@@ -22,8 +22,8 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 KEY = os.path.expanduser("~/.ssh/id_ed25519_baseuff")
 HOST = "marcus@cid-uff.net"
-# (porta ssh, shard) — skynet01 e skynet02, 2 GPUs cada
-GPU_HOSTS = [("22023", 0), ("22024", 1)]
+# (porta ssh, shard) — só skynet01 (skynet02 fica livre para outros serviços)
+GPU_HOSTS = [("22023", 0)]
 QDRANT_URL = "http://10.171.69.1:6333"
 LOCK = REPO / "data" / ".update.lock"
 

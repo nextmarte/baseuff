@@ -34,8 +34,8 @@ class Settings(BaseSettings):
     embed_ssh_user: str = "marcus"
     embed_model: str = "BAAI/bge-m3"
 
-    # Microserviço de encoding de queries (BGE-M3 no host GPU)
-    encoder_url: str = "http://10.171.69.11:8010"
+    # Microserviço de encoding de queries (BGE-M3 no skynet01)
+    encoder_url: str = "http://10.171.69.10:8010"
 
 
 def sqlite_path(dsn: str) -> str:
