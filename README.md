@@ -5,7 +5,7 @@ Agentes de IA consultam, em linguagem natural, ~392 mil trechos indexados com ci
 rastreável (nº do documento, data, URL). Em produção em `https://ultron.cid-uff.net/mcp`.
 
 **Acervo indexado (buscável):** três fontes —
-- **boletim** — Boletins de Serviço (diário oficial interno, 2010–2026): portarias, nomeações,
+- **boletim** — Boletins de Serviço (diário oficial interno, **1996–2026**): portarias, nomeações,
   progressões/promoções, licenças, aposentadorias, diárias, resoluções dos conselhos, editais.
 - **sti_kb** — Base de Conhecimento do STI: manuais/tutoriais dos sistemas, com o **texto das
   telas** extraído por OCR.

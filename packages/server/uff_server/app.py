@@ -17,7 +17,7 @@ from .retriever import QueryEncoder, dossier, get_document, retrieve, snippet_ar
 
 SOURCES = {
     "boletim": (
-        "Boletins de Serviço da UFF — o diário oficial INTERNO da universidade (2010–2026). "
+        "Boletins de Serviço da UFF — o diário oficial INTERNO da universidade (1996–2026). "
         "Contém portarias, nomeações, exonerações, designações, PROGRESSÕES e PROMOÇÕES "
         "funcionais de docentes/técnicos, licenças (capacitação, saúde), aposentadorias, "
         "diárias, resoluções dos conselhos (CEPEx, CUV, CEP), editais e resultados de "
