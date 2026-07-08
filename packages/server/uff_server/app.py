@@ -122,6 +122,111 @@ def build_docs(client: QdrantClient, collection: str, catalog=None) -> dict:
     }
 
 
+def render_docs_html(docs: dict) -> str:
+    """Renderiza a documentação como uma página wiki (HTML+CSS+JS autocontido)."""
+    import html as _h
+
+    acervo = docs.get("acervo", {})
+    tam = docs.get("tamanho", {})
+    base_url = "https://ultron.cid-uff.net/mcp"
+
+    def esc(x) -> str:
+        return _h.escape(str(x if x is not None else "—"))
+
+    fontes_cards = "".join(
+        f"""
+        <div class="card" id="fonte-{esc(src)}">
+          <h3><span class="pill">{esc(src)}</span></h3>
+          <p>{esc(a.get("tipo"))}</p>
+          <div class="meta">
+            <span><b>{esc(a.get("documentos"))}</b> documentos</span>
+            <span><b>{esc(a.get("trechos_indexados"))}</b> trechos</span>
+            <span>período: <b>{esc((a.get("periodo") or [None, None])[0])}</b> → <b>{esc((a.get("periodo") or [None, None])[1])}</b></span>
+          </div>
+        </div>"""
+        for src, a in acervo.items()
+    )
+    possibilidades = "".join(f"<li>{esc(p)}</li>" for p in docs.get("possibilidades", []))
+    exemplos = "".join(
+        f"<li><b>{esc(e.get('objetivo'))}:</b> <code>{esc(e.get('chamada'))}</code></li>"
+        for e in docs.get("exemplos", [])
+    )
+    limites = "".join(f"<li>{esc(x)}</li>" for x in docs.get("nao_inclui", []))
+
+    return f"""<!doctype html>
+<html lang="pt-br"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BaseUFF — Servidor MCP</title>
+<style>
+  :root {{ --bg:#0f1216; --card:#171c22; --fg:#e7edf3; --mut:#9fb0c0; --acc:#3aa0ff; --line:#232c36; }}
+  @media (prefers-color-scheme: light) {{ :root {{ --bg:#f6f8fa; --card:#fff; --fg:#1b232b; --mut:#5a6b7b; --acc:#0969da; --line:#e2e8ee; }} }}
+  * {{ box-sizing:border-box; }}
+  body {{ margin:0; font:16px/1.55 -apple-system,Segoe UI,Roboto,Arial,sans-serif; background:var(--bg); color:var(--fg); }}
+  .wrap {{ max-width:920px; margin:0 auto; padding:32px 20px 80px; }}
+  header h1 {{ margin:0 0 4px; font-size:30px; }}
+  header p {{ color:var(--mut); margin:0 0 20px; }}
+  .stats {{ display:flex; gap:12px; flex-wrap:wrap; margin:18px 0 8px; }}
+  .stat {{ background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px 18px; }}
+  .stat b {{ font-size:24px; display:block; }}
+  .stat span {{ color:var(--mut); font-size:13px; }}
+  h2 {{ margin:34px 0 12px; font-size:20px; border-bottom:1px solid var(--line); padding-bottom:6px; }}
+  .card {{ background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px 18px; margin:12px 0; }}
+  .card h3 {{ margin:0 0 8px; }}
+  .pill {{ background:var(--acc); color:#fff; padding:2px 10px; border-radius:20px; font-size:13px; }}
+  .meta {{ display:flex; gap:18px; flex-wrap:wrap; color:var(--mut); font-size:14px; margin-top:8px; }}
+  code {{ background:var(--line); padding:2px 6px; border-radius:6px; font-size:13.5px; }}
+  pre {{ background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; overflow:auto; }}
+  ul {{ padding-left:20px; }} li {{ margin:6px 0; }}
+  a {{ color:var(--acc); }}
+  .foot {{ color:var(--mut); font-size:13px; margin-top:40px; }}
+</style></head>
+<body><div class="wrap">
+<header>
+  <h1>BaseUFF <span class="pill">MCP</span></h1>
+  <p>{esc(docs.get("servidor"))}</p>
+</header>
+
+<div class="stats">
+  <div class="stat"><b>{esc(tam.get("total_documentos"))}</b><span>documentos</span></div>
+  <div class="stat"><b>{esc(tam.get("total_trechos_indexados"))}</b><span>trechos indexados</span></div>
+  <div class="stat"><b>{len(acervo)}</b><span>fontes</span></div>
+</div>
+
+<h2>Fontes do acervo</h2>
+{fontes_cards}
+
+<h2>Como conectar (agentes)</h2>
+<p>Servidor MCP over HTTP. Endpoint e autenticação por token Bearer (uma chave por agente):</p>
+<pre>URL:    {esc(base_url)}
+Header: Authorization: Bearer &lt;seu-token&gt;
+
+# config genérica (Claude Code / SDKs MCP)
+{{ "mcpServers": {{ "baseuff": {{
+    "url": "{esc(base_url)}",
+    "headers": {{ "Authorization": "Bearer &lt;token&gt;" }}
+}} }} }}</pre>
+
+<h2>Ferramentas</h2>
+<div class="card"><h3><code>search(query, limit=5, source=None)</code></h3>
+<p>Busca semântica (denso+esparso, reranqueada por cross-encoder). Retorna passagens com citação
+(numero, data, url, snippet). <code>source</code> ∈ {{boletim, sti_kb, pesquisa}} ou vazio p/ todas.</p></div>
+<div class="card"><h3><code>info()</code></h3><p>Esta documentação + dimensão do acervo ao vivo.</p></div>
+
+<h2>Possibilidades</h2>
+<ul>{possibilidades}</ul>
+
+<h2>Exemplos</h2>
+<ul>{exemplos}</ul>
+
+<h2>Limitações</h2>
+<p>Só conteúdo público publicado. Não inclui:</p>
+<ul>{limites}</ul>
+
+<p class="foot">Documentação pública. JSON em <a href="{esc(base_url)}/docs">{esc(base_url)}/docs</a>.
+As ferramentas exigem token; esta página não.</p>
+</div></body></html>"""
+
+
 def create_app(
     client: QdrantClient,
     collection: str,

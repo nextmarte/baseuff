@@ -14,7 +14,7 @@ import uvicorn
 from qdrant_client import QdrantClient
 from uff_core.catalog import Catalog
 from uff_core.config import Settings, sqlite_path
-from uff_server.app import build_docs, create_app
+from uff_server.app import build_docs, create_app, render_docs_html
 from uff_server.auth import BearerAuthMiddleware
 from uff_server.encoder import RemoteEncoder
 from uff_server.reranker import RemoteReranker
@@ -44,6 +44,7 @@ def main() -> None:
             mcp.http_app(),
             settings.mcp_tokens_path,
             docs_provider=lambda: build_docs(client, collection, catalog),
+            html_renderer=render_docs_html,
         )
         uvicorn.run(app, host=args.host, port=args.http)
     else:

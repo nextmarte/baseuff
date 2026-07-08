@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
-from starlette.responses import JSONResponse
+from starlette.responses import HTMLResponse, JSONResponse
 from starlette.types import Receive, Scope, Send
 
 
@@ -55,11 +55,13 @@ class BearerAuthMiddleware:
         token_path: str,
         docs_provider: Callable[[], dict] | None = None,
         docs_path: str = "/mcp/docs",
+        html_renderer: Callable[[dict], str] | None = None,
     ) -> None:
         self.app = app
         self.token_path = token_path
         self.docs_provider = docs_provider
         self.docs_path = docs_path
+        self.html_renderer = html_renderer
         self._mtime = -1.0
         self._tokens: set[str] = set()
         self._refresh()
@@ -85,7 +87,12 @@ class BearerAuthMiddleware:
             accept = headers.get(b"accept", b"").decode("latin-1").lower()
             wants_stream = "text/event-stream" in accept
             if path == self.docs_path.rstrip("/") or (path == "/mcp" and not wants_stream):
-                await JSONResponse(self.docs_provider())(scope, receive, send)
+                docs = self.docs_provider()
+                if self.html_renderer is not None and "text/html" in accept:
+                    response = HTMLResponse(self.html_renderer(docs))
+                else:
+                    response = JSONResponse(docs)
+                await response(scope, receive, send)
                 return
         self._refresh()
         headers = dict(scope.get("headers") or [])
