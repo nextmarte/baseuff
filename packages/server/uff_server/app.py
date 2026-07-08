@@ -60,6 +60,8 @@ POSSIBILIDADES = [
     "Buscar por tema livre (ex.: 'convênio', 'afastamento no exterior') em todo o acervo.",
 ]
 
+CONTATO_EMAIL = "marcusantonio@id.uff.br"
+
 EXEMPLOS = [
     {
         "objetivo": "atos de um professor",
@@ -119,6 +121,7 @@ def build_docs(client: QdrantClient, collection: str, catalog=None) -> dict:
             "cadastro de servidores / dados pessoais não publicados",
         ],
         "autenticacao": "as tools exigem header Authorization: Bearer <token>; esta doc é pública",
+        "solicitar_acesso": f"Para obter uma chave de acesso, envie e-mail para {CONTATO_EMAIL}",
     }
 
 
@@ -194,6 +197,12 @@ def render_docs_html(docs: dict) -> str:
 
 <h2>Fontes do acervo</h2>
 {fontes_cards}
+
+<h2>Solicitar acesso</h2>
+<div class="card">
+  <p>As ferramentas de busca exigem um <b>token</b> (uma chave por pessoa/agente). Para obter o seu,
+  envie um e-mail para <a href="mailto:{esc(CONTATO_EMAIL)}?subject=Acesso%20MCP%20BaseUFF"><b>{esc(CONTATO_EMAIL)}</b></a>.</p>
+</div>
 
 <h2>Como conectar (agentes)</h2>
 <p>Servidor MCP over HTTP. Endpoint e autenticação por token Bearer (uma chave por agente):</p>
