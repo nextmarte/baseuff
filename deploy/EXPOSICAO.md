@@ -1,54 +1,56 @@
 # Expor o servidor MCP na internet (sem AWS, sem DNS novo)
 
-O `ultron.cid-uff.net` já resolve para esta máquina (200.20.5.84) e já tem TLS.
-Expomos o MCP num **caminho** desse subdomínio: `https://ultron.cid-uff.net/mcp/`.
-Nada de subdomínio novo, DNS ou certificado. Só um trecho no Apache.
+O `ultron.cid-uff.net` já resolve para esta máquina e já tem TLS. Expomos o MCP num
+**caminho** desse subdomínio: `https://ultron.cid-uff.net/mcp/`. Sem subdomínio novo,
+DNS ou certificado. O Apache é só o proxy TLS; **a autenticação é no próprio servidor MCP**.
 
-Pré-requisitos já OK nesta máquina: Apache com `mod_proxy`, `proxy_http`, `headers`,
-`setenvif`, `authz_core`; serviço `baseuff-mcp` (systemd --user) em `127.0.0.1:8088`.
+## Autenticação (escala para N agentes, sem sudo)
 
-## Passos (rodar com sudo no ultron)
+Tokens em `data/mcp_tokens.txt` (uma linha por agente: `nome  token`). O servidor lê e
+**recarrega quando o arquivo muda** — adicionar/revogar agente NÃO exige sudo nem reload
+do Apache.
 
-1. **Gerar e guardar o token** (fora do git):
-   ```bash
-   TOKEN=$(openssl rand -hex 32); echo "$TOKEN"   # anote com segurança
-   ```
+```bash
+# adicionar um agente
+echo "meu_agente  $(openssl rand -hex 32)" >> data/mcp_tokens.txt
+# revogar: apague a linha do agente. (efeito em segundos)
+```
 
-2. **Inserir o trecho no vhost 443 do ultron**, com o token já substituído:
-   ```bash
-   SNIPPET=/home/marcus/desenvolvimento/baseuff/deploy/apache/ultron-mcp-location.conf
-   VHOST=/etc/apache2/sites-available/ultron.cid-uff.net-le-ssl.conf
-   sudo cp "$VHOST" "$VHOST.bak.$(date +%F)"                      # backup
-   TMP=$(mktemp); sed "s/__MCP_TOKEN__/$TOKEN/" "$SNIPPET" > "$TMP"
-   # insere o conteúdo de $TMP antes do </VirtualHost>
-   sudo sed -i "/<\/VirtualHost>/e cat $TMP" "$VHOST"
-   rm "$TMP"
-   ```
+## Ativar o proxy no Apache (uma vez, com sudo)
 
-3. **Testar e recarregar**:
-   ```bash
-   sudo apache2ctl configtest && sudo systemctl reload apache2
-   ```
+O trecho `deploy/apache/ultron-mcp-location.conf` NÃO tem segredo (só o proxy), então
+pode ser aplicado direto:
 
-4. **Validar**:
-   ```bash
-   # sem token -> 403
-   curl -s -o /dev/null -w "%{http_code}\n" https://ultron.cid-uff.net/mcp/
-   # com token -> responde (MCP)
-   curl -s -H "Authorization: Bearer $TOKEN" https://ultron.cid-uff.net/mcp/ | head -c 200
-   ```
+```bash
+VHOST=/etc/apache2/sites-available/ultron.cid-uff.net-le-ssl.conf
+sudo cp "$VHOST" "$VHOST.bak.$(date +%F)"
+sudo sed -i "/<\/VirtualHost>/e cat /home/marcus/desenvolvimento/baseuff/deploy/apache/ultron-mcp-location.conf" "$VHOST"
+sudo apache2ctl configtest && sudo systemctl reload apache2
+```
 
-## Como um cliente MCP conecta
+Validar:
+```bash
+TOKEN=$(awk '/^geral/{print $2}' /home/marcus/desenvolvimento/baseuff/data/mcp_tokens.txt)
+curl -s -o /dev/null -w "sem token -> %{http_code} (401)\n" https://ultron.cid-uff.net/mcp/
+curl -s -o /dev/null -w "com token -> %{http_code} (2xx/3xx)\n" \
+     -H "Authorization: Bearer $TOKEN" https://ultron.cid-uff.net/mcp/
+```
+
+## Como um agente conecta
 
 - **URL:** `https://ultron.cid-uff.net/mcp/`
-- **Header:** `Authorization: Bearer <TOKEN>`
+- **Header:** `Authorization: Bearer <token do agente>`
 
-Clientes que aceitam header custom (Claude Code, mcp-remote, SDKs) conectam direto.
-O conector web do claude.ai espera **OAuth** — para ele, o passo seguinte é trocar o
-token estático por OAuth (FastMCP suporta; fica como evolução).
+Config genérica (Claude Code / SDKs MCP):
+```json
+{ "mcpServers": { "baseuff": {
+    "url": "https://ultron.cid-uff.net/mcp/",
+    "headers": { "Authorization": "Bearer <token>" }
+} } }
+```
 
-## Notas
-- O `search` é request/response e passa liso pelo proxy. Se algum cliente usar streaming
-  (SSE) e houver buffering, adicionar `SetEnv proxy-sendchunked 1` no `<Location /mcp>`.
-- Renovação do cert (certbot) segue automática; nada aqui interfere.
-- Para revogar acesso: troque o token no vhost e `reload apache2`.
+hermes / openclaw / qualquer outro: mesma URL, cada um com seu token. O servidor é
+agnóstico de cliente (MCP over HTTP padrão).
+
+> O conector web do claude.ai espera OAuth; para ele, evoluir do token estático para
+> OAuth (FastMCP suporta) é o próximo passo, se necessário.
