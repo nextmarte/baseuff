@@ -49,6 +49,7 @@ class Catalog:
     """Acesso ao catálogo de documentos."""
 
     def __init__(self, path: str = "data/catalog.db") -> None:
+        self._path = path
         self._conn = sqlite3.connect(path)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA foreign_keys = ON")
@@ -151,11 +152,20 @@ class Catalog:
         return int(self._conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0])
 
     def stats(self) -> dict[str, dict]:
-        """Resumo do acervo por fonte: nº de documentos e período (min/max publish_date)."""
-        rows = self._conn.execute(
-            "SELECT source, COUNT(*) n, MIN(publish_date) mn, MAX(publish_date) mx "
-            "FROM documents GROUP BY source ORDER BY source"
-        ).fetchall()
+        """Resumo do acervo por fonte: nº de documentos e período (min/max publish_date).
+
+        Abre uma conexão própria de curta duração: o servidor MCP chama isto em threads
+        de worker, e uma conexão SQLite só pode ser usada na thread que a criou.
+        """
+        conn = sqlite3.connect(self._path)
+        conn.row_factory = sqlite3.Row
+        try:
+            rows = conn.execute(
+                "SELECT source, COUNT(*) n, MIN(publish_date) mn, MAX(publish_date) mx "
+                "FROM documents GROUP BY source ORDER BY source"
+            ).fetchall()
+        finally:
+            conn.close()
         return {
             r["source"]: {
                 "documentos": r["n"],
