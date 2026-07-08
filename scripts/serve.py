@@ -16,6 +16,7 @@ from uff_core.config import Settings
 from uff_server.app import create_app
 from uff_server.auth import BearerAuthMiddleware
 from uff_server.encoder import RemoteEncoder
+from uff_server.reranker import RemoteReranker
 
 
 def main() -> None:
@@ -31,7 +32,8 @@ def main() -> None:
     settings = Settings()
     client = QdrantClient(url=settings.qdrant_url, timeout=30)
     encoder = RemoteEncoder(settings.encoder_url)
-    mcp = create_app(client, settings.qdrant_collection, encoder)
+    reranker = RemoteReranker(settings.encoder_url)  # /rerank no mesmo host GPU
+    mcp = create_app(client, settings.qdrant_collection, encoder, reranker=reranker)
 
     if args.http:
         # App HTTP do MCP protegido por auth Bearer (chaves por agente, em arquivo).

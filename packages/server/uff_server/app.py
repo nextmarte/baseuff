@@ -1,30 +1,81 @@
 """Servidor MCP (FastMCP) do BaseUFF — retrieval-only.
 
-Expõe a busca híbrida como tool MCP. O cliente LLM (Claude etc.) chama ``search``
-e recebe passagens com citação rastreável (fonte, número, data, URL) para compor
-a resposta. O ``QdrantClient`` e o ``QueryEncoder`` são injetados (testável).
+Expõe a busca híbrida (denso+esparso, RRF, com reranker opcional) como tools MCP,
+além de documentação rica (``instructions`` + tool ``info``) para que o agente
+cliente entenda exatamente o que a base contém e como consultá-la.
 """
 
 from __future__ import annotations
 
 from fastmcp import FastMCP
-from qdrant_client import QdrantClient
+from qdrant_client import QdrantClient, models
 
 from .retriever import QueryEncoder, retrieve
 
+SOURCES = {
+    "boletim": (
+        "Boletins de Serviço da UFF — o diário oficial INTERNO da universidade (2010–2026). "
+        "Contém portarias, nomeações, exonerações, designações, PROGRESSÕES e PROMOÇÕES "
+        "funcionais de docentes/técnicos, licenças (capacitação, saúde), aposentadorias, "
+        "diárias, resoluções dos conselhos (CEPEx, CUV, CEP), editais e resultados de "
+        "concurso, convênios e eleições internas. Cada ato tem número do boletim, data e página."
+    ),
+    "sti_kb": (
+        "Base de Conhecimento do STI — MANUAIS e TUTORIAIS dos sistemas da UFF (Administração "
+        "Acadêmica, Diploma, etc.), organizados por pasta. Inclui o TEXTO DAS TELAS de sistema "
+        "extraído por OCR (menus, botões, campos), então dá para achar um passo pela interface."
+    ),
+    "pesquisa": (
+        "Portal da Pesquisa (pesquisa.uff.br) — editais e notícias da PROPPI: PIBIC, bolsas de "
+        "iniciação científica, chamadas internas, cronogramas e resultados. "
+        "NÃO é um banco de perfis de pesquisadores."
+    ),
+}
 
-def create_app(client: QdrantClient, collection: str, encoder: QueryEncoder) -> FastMCP:
-    mcp: FastMCP = FastMCP("BaseUFF")
+INSTRUCTIONS = (
+    "BaseUFF: busca semântica no acervo ABERTO da Universidade Federal Fluminense (UFF).\n\n"
+    "Fontes disponíveis (parâmetro `source` da tool `search`):\n"
+    + "\n".join(f"- {k}: {v}" for k, v in SOURCES.items())
+    + "\n\nComo usar:\n"
+    "- `search(query, source=None, limit=5)`: query em linguagem natural (pt-BR). Deixe "
+    '`source` vazio para buscar em todas, ou fixe uma fonte ("boletim"/"sti_kb"/"pesquisa").\n'
+    "- Cada resultado traz citação rastreável: número, data, URL do PDF e um trecho.\n"
+    "- Para uma PESSOA (ex.: progressão de um professor), use o nome completo; os resultados "
+    "trazem o boletim/data/URL exatos de cada ato.\n"
+    '- Para uma norma específica, cite o número (ex.: "Resolução CEPEx 3.779").\n\n'
+    "Limitações (seja honesto com o usuário): só conteúdo PÚBLICO já publicado. NÃO há acesso a "
+    "SIAPE/SiapeNet, sistemas internos, dados financeiros detalhados nem cadastro de servidores. "
+    "Boletins escaneados antigos podem ter ruído de OCR. "
+    "Use a tool `info` para ver a cobertura atual."
+)
+
+
+def create_app(
+    client: QdrantClient,
+    collection: str,
+    encoder: QueryEncoder,
+    reranker=None,
+) -> FastMCP:
+    mcp: FastMCP = FastMCP("BaseUFF", instructions=INSTRUCTIONS)
 
     @mcp.tool
     def search(query: str, limit: int = 5, source: str | None = None) -> list[dict]:
-        """Busca no acervo aberto da UFF (Boletins de Serviço e outros).
+        """Busca semântica no acervo aberto da UFF; retorna passagens com citação.
 
-        Retorna passagens relevantes com citação (fonte, número, data, URL) para
-        que o cliente componha a resposta. ``source`` filtra por fonte
-        (ex.: ``"boletim"``); ``limit`` limita o número de passagens.
+        Args:
+            query: pergunta/termo em linguagem natural (pt-BR).
+            limit: número máximo de passagens (padrão 5).
+            source: filtra a fonte — "boletim" (Boletins de Serviço: portarias, nomeações,
+                progressões, licenças, aposentadorias, resoluções…), "sti_kb" (manuais/tutoriais
+                dos sistemas do STI, com texto das telas via OCR) ou "pesquisa" (editais PIBIC/
+                bolsas). Deixe vazio para buscar em todas.
+
+        Retorna lista de objetos {numero, source, publish_date, url, snippet, score},
+        ordenados por relevância (reranqueados por cross-encoder quando disponível).
         """
-        results = retrieve(client, collection, encoder, query, limit=limit, source=source)
+        results = retrieve(
+            client, collection, encoder, query, limit=limit, source=source, reranker=reranker
+        )
         return [
             {
                 "numero": r.numero,
@@ -36,5 +87,34 @@ def create_app(client: QdrantClient, collection: str, encoder: QueryEncoder) -> 
             }
             for r in results
         ]
+
+    @mcp.tool
+    def info() -> dict:
+        """Documentação do servidor: fontes, o que cada uma contém, cobertura ATUAL
+        (contagem de trechos por fonte) e limitações. Chame isto para saber o que a base oferece."""
+        counts: dict[str, int] = {}
+        for src in SOURCES:
+            counts[src] = client.count(
+                collection,
+                count_filter=models.Filter(
+                    must=[models.FieldCondition(key="source", match=models.MatchValue(value=src))]
+                ),
+            ).count
+        return {
+            "servidor": "BaseUFF — RAG sobre o acervo aberto da UFF",
+            "fontes": SOURCES,
+            "trechos_indexados_por_fonte": counts,
+            "total_trechos": client.count(collection).count,
+            "tools": {
+                "search": "search(query, limit=5, source=None) -> passagens com citação",
+                "info": "info() -> esta documentação + cobertura",
+            },
+            "citacao": "cada resultado traz numero, data (publish_date) e url do PDF/página",
+            "nao_inclui": [
+                "SIAPE/SiapeNet e sistemas internos",
+                "dados financeiros detalhados",
+                "cadastro de servidores / dados pessoais não publicados",
+            ],
+        }
 
     return mcp
