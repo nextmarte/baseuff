@@ -54,3 +54,8 @@ agnóstico de cliente (MCP over HTTP padrão).
 
 > O conector web do claude.ai espera OAuth; para ele, evoluir do token estático para
 > OAuth (FastMCP suporta) é o próximo passo, se necessário.
+
+## ⚠️ Pegadinha deste servidor
+Neste ultron, `sites-enabled/` contém **cópias** dos vhosts (não symlinks, fora do padrão
+Debian). Editar em `sites-available/` **não** tem efeito — editar o arquivo em
+`sites-enabled/` e recarregar. A auth Bearer é no app; use `https://ultron.cid-uff.net/mcp`.
