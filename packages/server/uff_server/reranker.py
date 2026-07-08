@@ -56,9 +56,12 @@ class CascadeReranker:
         order = sorted(range(len(passages)), key=lambda i: col[i], reverse=True)
         top = order[: self.first_k]
         cross = self.cross.rerank(query, [passages[i] for i in top])
-        scores = [-1.0 - (len(passages) - r) for r in range(len(passages))]  # base: ordem ColBERT
+        # Os finalizados pelo cross-encoder recebem seu score REAL (0..1, interpretável e
+        # logável); os demais ficam negativos (abaixo), mantendo a ordem do ColBERT. Como
+        # limit <= first_k, o cliente só vê os scores reais do cross-encoder.
+        scores = [0.0] * len(passages)
         for i, idx in enumerate(order):
-            scores[idx] = -1.0 - (len(passages) - i)  # mantém ranking relativo do ColBERT
+            scores[idx] = -1.0 - i
         for j, idx in enumerate(top):
-            scores[idx] = 100.0 + float(cross[j])  # topo: cross-encoder, acima de todos
+            scores[idx] = float(cross[j])
         return scores
