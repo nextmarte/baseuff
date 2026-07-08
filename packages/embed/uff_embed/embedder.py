@@ -1,7 +1,7 @@
 """Embeddings BGE-M3 (denso + esparso) para busca híbrida.
 
 Um único modelo gera o vetor denso (1024-d) e os pesos lexicais esparsos, que
-alimentam as duas pernas da busca híbrida no Qdrant. Roda no skynet02 (GPU).
+alimentam as duas pernas da busca híbrida no Qdrant. Roda no skynet01 (GPU).
 """
 
 from __future__ import annotations

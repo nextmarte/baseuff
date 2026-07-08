@@ -1,8 +1,9 @@
 """Índice Qdrant: coleção com vetores nomeados (denso + esparso) e busca híbrida.
 
 Funciona tanto em modo servidor (``url=``) quanto embutido em disco (``path=``),
-usado na prova de conceito. A fusão híbrida usa RRF (Reciprocal Rank Fusion) para
-combinar as pernas densa e esparsa sem depender de reranker no caminho de query.
+usado na prova de conceito. A fusão híbrida usa RRF (Reciprocal Rank Fusion). Em
+produção o reranking (cross-encoder/ColBERT) fica no servidor MCP (``uff_server``);
+este ``hybrid_search`` é o caminho de indexação/POC, sem reranker.
 """
 
 from __future__ import annotations

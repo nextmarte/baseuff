@@ -1,4 +1,4 @@
-"""Adaptador de parsing com Docling (roda no skynet02, usa GPU/OCR).
+"""Adaptador de parsing com Docling (roda no skynet01, usa GPU/OCR).
 
 Converte um PDF (inclusive escaneado, via OCR) em Markdown com layout/tabelas
 preservados. O ``DocumentConverter`` é caro de instanciar (carrega modelos), então

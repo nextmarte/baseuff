@@ -1,4 +1,4 @@
-"""Fatia vertical (skynet02): parse -> chunk -> embed -> Qdrant -> query de prova.
+"""Fatia vertical (skynet01): parse -> chunk -> embed -> Qdrant -> query de prova.
 
 Prova o sistema RAG completo sobre a amostra de Boletins já baixada. Uso:
 

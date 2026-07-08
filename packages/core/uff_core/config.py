@@ -28,13 +28,14 @@ class Settings(BaseSettings):
     max_concurrency: int = 4
     boletim_start_year: int = 2010
 
-    # Hosts de vetorização (skynet01/02) — sem senha; acesso por chave SSH
+    # Host de GPU: skynet01 (embed em batch + microserviço de encode/rerank online).
+    # skynet02 fica livre para outros serviços do usuário. Acesso por chave SSH (sem senha).
     embed_host: str = "cid-uff.net"
-    embed_ssh_port: int = 22024
+    embed_ssh_port: int = 22023  # skynet01 (10.171.69.10)
     embed_ssh_user: str = "marcus"
     embed_model: str = "BAAI/bge-m3"
 
-    # Microserviço de encoding de queries (BGE-M3 no skynet01)
+    # Microserviço no skynet01: /encode (BGE-M3) + /rerank (cross-encoder) + /colbert_rerank
     encoder_url: str = "http://10.171.69.10:8010"
 
     # Auth do servidor MCP: arquivo de tokens (agente<espaço>token por linha)

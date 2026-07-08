@@ -5,7 +5,7 @@ chave natural (``source``, ``url``), metadados e status no ciclo de vida. Habili
 deduplicação e ingestão incremental (via ``checksum``/``etag``/``last_modified``).
 
 Backend SQLite por simplicidade no dev/local; a API é pensada para migrar a
-Postgres em produção multi-host (crawler no ultron + worker no skynet02).
+Postgres em produção multi-host (crawler+serving no ultron; embed no skynet01).
 """
 
 from __future__ import annotations

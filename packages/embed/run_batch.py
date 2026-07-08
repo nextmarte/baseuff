@@ -1,4 +1,4 @@
-"""Indexação em escala (skynet01/skynet02): parse híbrido -> chunk -> embed -> Qdrant.
+"""Indexação em escala (skynet01): parse híbrido -> chunk -> embed -> Qdrant.
 
 Cada host processa um shard dos documentos (``doc_id % num_shards == shard``) com
 suas 2 GPUs (FlagEmbedding faz data-parallel automático). Os pontos têm ID
