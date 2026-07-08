@@ -19,6 +19,11 @@ from uff_server.encoder import RemoteEncoder
 def main() -> None:
     ap = argparse.ArgumentParser(description="Servidor MCP BaseUFF")
     ap.add_argument("--http", type=int, default=None, help="porta HTTP (default: stdio)")
+    ap.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="bind do HTTP (default: 127.0.0.1; a exposição pública passa por proxy TLS)",
+    )
     args = ap.parse_args()
 
     settings = Settings()
@@ -27,7 +32,7 @@ def main() -> None:
     mcp = create_app(client, settings.qdrant_collection, encoder)
 
     if args.http:
-        mcp.run(transport="http", host="0.0.0.0", port=args.http)
+        mcp.run(transport="http", host=args.host, port=args.http)
     else:
         mcp.run()
 
