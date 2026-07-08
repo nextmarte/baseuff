@@ -77,14 +77,16 @@ class BearerAuthMiddleware:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
-        # Documentação pública (sem auth): GET no docs_path.
-        if (
-            self.docs_provider is not None
-            and scope.get("method") == "GET"
-            and scope.get("path", "").rstrip("/") == self.docs_path.rstrip("/")
-        ):
-            await JSONResponse(self.docs_provider())(scope, receive, send)
-            return
+        # Documentação pública (sem auth): GET em /mcp/docs, ou GET na raiz /mcp de um
+        # navegador (Accept sem text/event-stream). Cliente MCP real (POST/SSE) segue p/ auth.
+        if self.docs_provider is not None and scope.get("method") == "GET":
+            path = scope.get("path", "").rstrip("/") or "/"
+            headers = dict(scope.get("headers") or [])
+            accept = headers.get(b"accept", b"").decode("latin-1").lower()
+            wants_stream = "text/event-stream" in accept
+            if path == self.docs_path.rstrip("/") or (path == "/mcp" and not wants_stream):
+                await JSONResponse(self.docs_provider())(scope, receive, send)
+                return
         self._refresh()
         headers = dict(scope.get("headers") or [])
         authorization = headers.get(b"authorization", b"").decode("latin-1")
