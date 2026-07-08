@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import argparse
 
+import uvicorn
 from qdrant_client import QdrantClient
 from uff_core.config import Settings
 from uff_server.app import create_app
+from uff_server.auth import BearerAuthMiddleware
 from uff_server.encoder import RemoteEncoder
 
 
@@ -32,9 +34,11 @@ def main() -> None:
     mcp = create_app(client, settings.qdrant_collection, encoder)
 
     if args.http:
-        mcp.run(transport="http", host=args.host, port=args.http)
+        # App HTTP do MCP protegido por auth Bearer (chaves por agente, em arquivo).
+        app = BearerAuthMiddleware(mcp.http_app(), settings.mcp_tokens_path)
+        uvicorn.run(app, host=args.host, port=args.http)
     else:
-        mcp.run()
+        mcp.run()  # stdio (local, sem auth)
 
 
 if __name__ == "__main__":

@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     # Microserviço de encoding de queries (BGE-M3 no skynet01)
     encoder_url: str = "http://10.171.69.10:8010"
 
+    # Auth do servidor MCP: arquivo de tokens (agente<espaço>token por linha)
+    mcp_tokens_path: str = "data/mcp_tokens.txt"
+
 
 def sqlite_path(dsn: str) -> str:
     """Extrai o caminho de arquivo de um DSN ``sqlite:///...``.
