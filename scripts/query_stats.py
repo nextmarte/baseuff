@@ -18,6 +18,7 @@ import statistics
 from pathlib import Path
 
 from uff_core.config import Settings
+from uff_server.pii import mask_cpf
 
 # Abaixo deste score de reranker (sigmoid 0..1), a busca provavelmente não achou bom match.
 # ~0.5 é o "neutro" do cross-encoder; ajuste conforme os dados reais forem chegando.
@@ -78,9 +79,10 @@ def main() -> None:
     por_dia = dist("ts", lambda t: (t or "")[:10])
     print("por dia:       " + ", ".join(f"{k}={v}" for k, v in por_dia))
 
+    q_show = mask_cpf if args.anon else (lambda x: x)  # no modo paper, mascara CPF nas queries
     print(f"\ntop {args.top} queries:")
     for q, c in dist("query")[: args.top]:
-        print(f"  {c:3}x  {q}")
+        print(f"  {c:3}x  {q_show(q)}")
 
     # --- lacunas (sinal de qualidade) ---
     gaps = []
@@ -94,7 +96,7 @@ def main() -> None:
                 gaps.append(("search", r["query"], f"melhor score {best:.2f}"))
     print(f"\nLACUNAS ({len(gaps)}) — consultas mal atendidas (conteúdo faltante?):")
     for tool, q, motivo in gaps[: args.top]:
-        print(f"  [{tool}] {q}  ({motivo})")
+        print(f"  [{tool}] {q_show(q)}  ({motivo})")
 
 
 if __name__ == "__main__":

@@ -13,6 +13,7 @@ from fastmcp import FastMCP
 from qdrant_client import QdrantClient, models
 
 from .auth import current_agent
+from .pii import mask_cpf
 from .retriever import QueryEncoder, dossier, get_document, retrieve, snippet_around
 
 SOURCES = {
@@ -312,7 +313,7 @@ def create_app(
                 "source": r.source,
                 "publish_date": r.publish_date,
                 "url": r.url,
-                "snippet": snippet_around(r.text, query),
+                "snippet": mask_cpf(snippet_around(r.text, query)),
                 "score": round(r.score, 4),
             }
             for r in results
@@ -345,6 +346,8 @@ def create_app(
         """
         t0 = time.perf_counter()
         docs = dossier(client, collection, nome, source=source)
+        for d in docs:  # anonimiza o snippet entregue (índice permanece cru)
+            d["snippet"] = mask_cpf(d.get("snippet"))
         _record(
             "dossie",
             nome,
@@ -368,6 +371,8 @@ def create_app(
         """
         t0 = time.perf_counter()
         doc = get_document(client, collection, doc_id=doc_id, numero=numero, source=source)
+        if doc:  # anonimiza o texto entregue (índice permanece cru)
+            doc["texto"] = mask_cpf(doc["texto"])
         _record("get_documento", str(doc_id or numero), t0, 1 if doc else 0, source=source)
         return doc
 
