@@ -139,7 +139,9 @@ def retrieve(
     pelo cross-encoder (mais preciso no topo)."""
     fetch = candidate_k if (reranker is not None and candidate_k) else limit
     if reranker is not None and not candidate_k:
-        fetch = max(limit * 8, 40)
+        # over-fetch enxuto: reranquear ~24 candidatos mantém a qualidade e corta a
+        # latência (o cross-encoder custa ~40ms/par; 80 candidatos = ~3s).
+        fetch = max(limit * 4, 24)
 
     qv = encoder.encode_query(query)
     query_filter = _build_filter(source=source, date_from=date_from, date_to=date_to)

@@ -16,12 +16,15 @@ class Reranker:
     ) -> None:
         from sentence_transformers import CrossEncoder
 
-        # device=None deixa o ST escolher (cuda se disponível); max_length=512 basta p/ trechos.
-        self.model = CrossEncoder(model_name, max_length=512, device=device)
+        # max_length=320: os trechos são curtos; truncar corta o custo do cross-encoder
+        # (dominante na latência) sem perder o sinal relevante do topo do trecho.
+        self.model = CrossEncoder(model_name, max_length=320, device=device)
 
     def scores(self, query: str, passages: list[str]) -> list[float]:
         if not passages:
             return []
-        logits = self.model.predict([[query, p] for p in passages])
+        logits = self.model.predict(
+            [[query, p] for p in passages], batch_size=64, show_progress_bar=False
+        )
         # sigmoid -> 0..1 (a ordem é o que importa; normalizar ajuda a interpretar)
         return [1.0 / (1.0 + math.exp(-float(x))) for x in logits]

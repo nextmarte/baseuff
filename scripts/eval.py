@@ -11,6 +11,8 @@ agrega hit@1/@3/@10 e MRR. Serve para medir antes/depois de mudanças (reranker 
 from __future__ import annotations
 
 import argparse
+import statistics
+import time
 
 from qdrant_client import QdrantClient
 from uff_core.config import Settings
@@ -86,9 +88,11 @@ def main() -> None:
     print(f"### {label} ###")
 
     ranks: list[int | None] = []
-    print(f"{'cenário':22} {'fonte':9} {'rank':>5}  resultado")
-    print("-" * 70)
+    lat: list[float] = []
+    print(f"{'cenário':22} {'fonte':9} {'rank':>5} {'ms':>6}  resultado")
+    print("-" * 76)
     for name, query, source, expected in SCENARIOS:
+        t0 = time.perf_counter()
         hits = retrieve(
             client,
             s.qdrant_collection,
@@ -98,13 +102,14 @@ def main() -> None:
             source=source,
             reranker=reranker,
         )
+        lat.append((time.perf_counter() - t0) * 1000)
         r = _rank(hits, expected)
         negative = name.startswith("neg_")
         ok = (r is None) if negative else (r is not None)
         mark = "OK " if ok else "!! "
         ranks.append(None if negative else r)
         print(
-            f"{mark}{name:20} {source or 'todas':9} {str(r or '-'):>5}  "
+            f"{mark}{name:20} {source or 'todas':9} {str(r or '-'):>5} {lat[-1]:>6.0f}  "
             f"{'(esperado: nenhum)' if negative else expected}"
         )
 
@@ -115,10 +120,14 @@ def main() -> None:
     hit10 = sum(1 for r in graded if r is not None)
     mrr = sum((1.0 / r) for r in graded if r) / len(graded)
     n = len(graded)
-    print("-" * 70)
+    print("-" * 76)
     print(
         f"known-item: {n} cenários | hit@1={hit1}/{n} hit@3={hit3}/{n} "
         f"hit@10={hit10}/{n} | MRR={mrr:.3f}"
+    )
+    print(
+        f"latência/consulta: média={statistics.mean(lat):.0f}ms "
+        f"mediana={statistics.median(lat):.0f}ms max={max(lat):.0f}ms"
     )
 
 
