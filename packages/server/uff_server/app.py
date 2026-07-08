@@ -10,7 +10,7 @@ from __future__ import annotations
 from fastmcp import FastMCP
 from qdrant_client import QdrantClient, models
 
-from .retriever import QueryEncoder, retrieve
+from .retriever import QueryEncoder, dossier, get_document, retrieve, snippet_around
 
 SOURCES = {
     "boletim": (
@@ -36,13 +36,14 @@ INSTRUCTIONS = (
     "BaseUFF: busca semântica no acervo ABERTO da Universidade Federal Fluminense (UFF).\n\n"
     "Fontes disponíveis (parâmetro `source` da tool `search`):\n"
     + "\n".join(f"- {k}: {v}" for k, v in SOURCES.items())
-    + "\n\nComo usar:\n"
-    "- `search(query, source=None, limit=5)`: query em linguagem natural (pt-BR). Deixe "
-    '`source` vazio para buscar em todas, ou fixe uma fonte ("boletim"/"sti_kb"/"pesquisa").\n'
-    "- Cada resultado traz citação rastreável: número, data, URL do PDF e um trecho.\n"
-    "- Para uma PESSOA (ex.: progressão de um professor), use o nome completo; os resultados "
-    "trazem o boletim/data/URL exatos de cada ato.\n"
-    '- Para uma norma específica, cite o número (ex.: "Resolução CEPEx 3.779").\n\n'
+    + "\n\nEstratégia (qual tool usar):\n"
+    "- **Tema/assunto** → `search(query, source?, date_from?, date_to?, limit)`: híbrido+reranker; "
+    "fixe `source`/período quando souber (boletim domina o acervo).\n"
+    "- **Todos os atos de uma PESSOA** (dossiê de progressão, histórico) → `dossie(nome, source)`: "
+    "EXAUSTIVO (não top-k), varre todo o acervo, dedup por documento, cronológico.\n"
+    "- **Ler um ato/documento inteiro** → `get_documento(doc_id)` (doc_id vem no `search`).\n"
+    "- **Dimensão do acervo** → `info()`.\n"
+    "- Cada resultado traz citação rastreável: número, data, URL do PDF e um trecho.\n\n"
     "Limitações (seja honesto com o usuário): só conteúdo PÚBLICO já publicado. NÃO há acesso a "
     "SIAPE/SiapeNet, sistemas internos, dados financeiros detalhados nem cadastro de servidores. "
     "Boletins escaneados antigos podem ter ruído de OCR. "
@@ -112,7 +113,9 @@ def build_docs(client: QdrantClient, collection: str, catalog=None) -> dict:
         "possibilidades": POSSIBILIDADES,
         "exemplos": EXEMPLOS,
         "tools": {
-            "search": "search(query, limit=5, source=None) -> passagens com citação",
+            "search": "search(query, limit=5, source=None, date_from=None, date_to=None) -> passagens (tema)",
+            "dossie": "dossie(nome, source='boletim') -> TODOS os atos de uma pessoa (exaustivo)",
+            "get_documento": "get_documento(doc_id) -> documento/ato inteiro",
             "info": "info() -> esta documentação + dimensão do acervo",
         },
         "nao_inclui": [
@@ -216,9 +219,14 @@ Header: Authorization: Bearer &lt;seu-token&gt;
 }} }} }}</pre>
 
 <h2>Ferramentas</h2>
-<div class="card"><h3><code>search(query, limit=5, source=None)</code></h3>
-<p>Busca semântica (denso+esparso, reranqueada por cross-encoder). Retorna passagens com citação
-(numero, data, url, snippet). <code>source</code> ∈ {{boletim, sti_kb, pesquisa}} ou vazio p/ todas.</p></div>
+<div class="card"><h3><code>search(query, limit=5, source=None, date_from=None, date_to=None)</code></h3>
+<p>Busca por <b>tema</b> (denso+esparso, reranqueada por cross-encoder), com filtros de fonte e
+período. Retorna passagens com citação (doc_id, numero, data, url, snippet).</p></div>
+<div class="card"><h3><code>dossie(nome, source="boletim")</code></h3>
+<p><b>Levantamento exaustivo</b> por pessoa/entidade — TODOS os atos (não top-k), deduplicado por
+documento e em ordem cronológica. Ideal para dossiê de progressão/histórico.</p></div>
+<div class="card"><h3><code>get_documento(doc_id)</code></h3>
+<p>Reconstrói um ato/documento <b>inteiro</b> (todos os trechos, em ordem) para contexto pleno.</p></div>
 <div class="card"><h3><code>info()</code></h3><p>Esta documentação + dimensão do acervo ao vivo.</p></div>
 
 <h2>Possibilidades</h2>
@@ -246,34 +254,78 @@ def create_app(
     mcp: FastMCP = FastMCP("BaseUFF", instructions=INSTRUCTIONS)
 
     @mcp.tool
-    def search(query: str, limit: int = 5, source: str | None = None) -> list[dict]:
-        """Busca semântica no acervo aberto da UFF; retorna passagens com citação.
+    def search(
+        query: str,
+        limit: int = 5,
+        source: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+    ) -> list[dict]:
+        """Busca semântica (híbrida + reranker) no acervo aberto da UFF, com filtros.
+
+        Melhor para perguntas por TEMA/assunto. Para levantar TODOS os atos de uma
+        pessoa, use `dossie`. Para ler um ato inteiro, use `get_documento`.
 
         Args:
             query: pergunta/termo em linguagem natural (pt-BR).
             limit: número máximo de passagens (padrão 5).
-            source: filtra a fonte — "boletim" (Boletins de Serviço: portarias, nomeações,
-                progressões, licenças, aposentadorias, resoluções…), "sti_kb" (manuais/tutoriais
-                dos sistemas do STI, com texto das telas via OCR) ou "pesquisa" (editais PIBIC/
-                bolsas). Deixe vazio para buscar em todas.
+            source: filtra a fonte — "boletim", "sti_kb" ou "pesquisa" (vazio = todas).
+                Como boletim domina o acervo, fixe a fonte quando souber onde procurar.
+            date_from / date_to: período (ISO "AAAA-MM-DD") sobre a data de publicação.
 
-        Retorna lista de objetos {numero, source, publish_date, url, snippet, score},
-        ordenados por relevância (reranqueados por cross-encoder quando disponível).
+        Retorna [{doc_id, numero, source, publish_date, url, snippet, score}] por relevância.
         """
         results = retrieve(
-            client, collection, encoder, query, limit=limit, source=source, reranker=reranker
+            client,
+            collection,
+            encoder,
+            query,
+            limit=limit,
+            source=source,
+            date_from=date_from,
+            date_to=date_to,
+            reranker=reranker,
         )
         return [
             {
+                "doc_id": r.doc_id,
                 "numero": r.numero,
                 "source": r.source,
                 "publish_date": r.publish_date,
                 "url": r.url,
-                "snippet": r.snippet,
+                "snippet": snippet_around(r.text, query),
                 "score": round(r.score, 4),
             }
             for r in results
         ]
+
+    @mcp.tool
+    def dossie(nome: str, source: str | None = "boletim") -> dict:
+        """Levantamento EXAUSTIVO por pessoa/entidade — TODOS os atos, não só o top-k.
+
+        Use para "todos os boletins onde X aparece", montar dossiê de progressão etc.
+        Varre todo o acervo por ocorrência exata do nome, deduplica por documento e
+        ordena por data. Diferente de `search`, não corta em top-k.
+
+        Args:
+            nome: nome completo da pessoa/entidade (quanto mais completo, mais preciso).
+            source: fonte (padrão "boletim"; vazio = todas).
+
+        Retorna {nome, total, documentos: [{numero, source, publish_date, url, snippet}]}.
+        """
+        docs = dossier(client, collection, nome, source=source)
+        return {"nome": nome, "total": len(docs), "documentos": docs}
+
+    @mcp.tool
+    def get_documento(
+        doc_id: int | None = None, numero: str | None = None, source: str = "boletim"
+    ) -> dict | None:
+        """Reconstrói um documento/ato INTEIRO (todos os trechos, em ordem) para contexto pleno.
+
+        Prefira `doc_id` (único, vem nos resultados de `search`). `numero` pode ser ambíguo
+        entre anos. Retorna {doc_id, source, numero, publish_date, url, n_chunks, texto} ou null.
+        """
+        return get_document(client, collection, doc_id=doc_id, numero=numero, source=source)
 
     @mcp.tool
     def info() -> dict:
