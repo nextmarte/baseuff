@@ -5,6 +5,19 @@ from uff_server.encoder import RemoteEncoder
 
 
 @respx.mock(assert_all_called=False)
+def test_encode_query_caches_repeated_text(respx_mock):
+    route = respx_mock.post("http://gpu:8010/encode").mock(
+        return_value=httpx.Response(
+            200, json={"dense": [0.1] * 4, "sparse_indices": [1], "sparse_values": [0.5]}
+        )
+    )
+    enc = RemoteEncoder("http://gpu:8010")
+    enc.encode_query("mesma query")
+    enc.encode_query("mesma query")  # deve vir do cache
+    assert route.call_count == 1
+
+
+@respx.mock(assert_all_called=False)
 def test_encode_query_posts_text_and_parses_vectors(respx_mock):
     route = respx_mock.post("http://gpu:8010/encode").mock(
         return_value=httpx.Response(
