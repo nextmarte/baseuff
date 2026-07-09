@@ -118,7 +118,7 @@ def build_docs(client: QdrantClient, collection: str, catalog=None) -> dict:
         "exemplos": EXEMPLOS,
         "tools": {
             "search": "search(query, limit=5, source=None, date_from=None, date_to=None) -> passagens (tema)",
-            "dossie": "dossie(nome, source='boletim') -> TODOS os atos de uma pessoa (exaustivo)",
+            "dossie": "dossie(nome, source='boletim') -> confirmados + provaveis (exaustivo por pessoa)",
             "get_documento": "get_documento(doc_id) -> documento/ato inteiro",
             "info": "info() -> esta documentação + dimensão do acervo",
         },
@@ -335,30 +335,38 @@ def create_app(
         """Levantamento EXAUSTIVO por pessoa/entidade — TODOS os atos, não só o top-k.
 
         Use para "todos os boletins onde X aparece", montar dossiê de progressão etc.
-        Varre todo o acervo por ocorrência exata do nome, deduplica por documento e
-        ordena por data. Diferente de `search`, não corta em top-k.
+        Varre todo o acervo, deduplica por documento e ordena por data. Retorna em DOIS níveis:
+        - `confirmados`: nome contíguo no texto (alta confiança — é a pessoa).
+        - `provaveis`: mesmos nomes em ordem com partes no meio (recupera nomes compostos,
+          ex.: "Mariana Marinho Peixoto" acha "Mariana Marinho da Costa Lima Peixoto"). Podem
+          conter HOMÔNIMOS — trate como "a verificar". Quanto mais completo o nome, menos ruído.
 
         Args:
-            nome: nome completo da pessoa/entidade (quanto mais completo, mais preciso).
+            nome: nome da pessoa/entidade (use o mais completo que souber).
             source: fonte (padrão "boletim"; vazio = todas).
 
-        Retorna {nome, total, documentos: [{numero, source, publish_date, url, snippet}]}.
+        Retorna {nome, total_confirmados, total_provaveis, confirmados:[...], provaveis:[...]},
+        cada item {numero, source, publish_date, url, snippet}.
         """
         t0 = time.perf_counter()
-        docs = dossier(client, collection, nome, source=source)
-        for d in docs:  # anonimiza o snippet entregue (índice permanece cru)
-            d["snippet"] = mask_cpf(d.get("snippet"))
+        res = dossier(client, collection, nome, source=source)
+        for bucket in ("confirmados", "provaveis"):
+            for d in res[bucket]:  # anonimiza o snippet entregue (índice permanece cru)
+                d["snippet"] = mask_cpf(d.get("snippet"))
+        conf, prov = res["confirmados"], res["provaveis"]
         _record(
-            "dossie",
-            nome,
-            t0,
-            len(docs),
-            source=source,
+            "dossie", nome, t0, len(conf) + len(prov), source=source,
             top_results=[
-                {"numero": d["numero"], "publish_date": d["publish_date"]} for d in docs[:3]
+                {"numero": d["numero"], "publish_date": d["publish_date"]} for d in conf[:3]
             ],
         )
-        return {"nome": nome, "total": len(docs), "documentos": docs}
+        return {
+            "nome": nome,
+            "total_confirmados": len(conf),
+            "total_provaveis": len(prov),
+            "confirmados": conf,
+            "provaveis": prov,
+        }
 
     @mcp.tool
     def get_documento(

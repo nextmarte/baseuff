@@ -61,23 +61,26 @@ class FakeScrollClient:
         return self._pts, None  # ignora o filtro; o pós-filtro por substring é que decide
 
 
-def test_dossier_is_exhaustive_deduped_and_chronological():
+def test_dossier_confirmados_deduped_and_chronological():
     rows = [
         ("010", "2020-01-05", "Designar JOAO DA SILVA para a comissão."),
         ("020", "2020-02-10", "Progressão de JOAO DA SILVA, matrícula 123."),
-        (
-            "020",
-            "2020-02-10",
-            "Outra parte do mesmo boletim 020 sobre JOAO DA SILVA.",
-        ),  # dup boletim
+        ("020", "2020-02-10", "Outra parte do mesmo boletim 020 sobre JOAO DA SILVA."),  # dup
         ("030", "2019-03-01", "Aposentadoria de JOAO DA SILVA."),  # mais antigo
-        (
-            "040",
-            "2020-05-01",
-            "Nomear JOAO PEREIRA e MARIA DA SILVA.",
-        ),  # tokens separados: não é ele
+        ("040", "2020-05-01", "Nomear JOAO PEREIRA e MARIA DA SILVA."),  # NÃO é ele
     ]
     r = dossier(FakeScrollClient(rows), "uff", "Joao da Silva", source="boletim")
-    numeros = [e["numero"] for e in r]
+    numeros = [e["numero"] for e in r["confirmados"]]
     assert numeros == ["030", "010", "020"]  # cronológico, sem duplicar 020, sem o 040
-    assert all("silva" in _fold(e["snippet"]) for e in r)
+    assert all("silva" in _fold(e["snippet"]) for e in r["confirmados"])
+
+
+def test_dossier_compound_middle_name_goes_to_provaveis():
+    # nome buscado é subsequência do nome completo (partes no meio) -> "provaveis", não "confirmados"
+    rows = [
+        ("100", "2021-01-01", "Designar MARIANA MARINHO DA COSTA LIMA PEIXOTO, SIAPE 123."),
+        ("101", "2021-02-01", "Nomear MARIANA MARINHO PEIXOTO como coordenadora."),  # contíguo
+    ]
+    r = dossier(FakeScrollClient(rows), "uff", "Mariana Marinho Peixoto", source="boletim")
+    assert [e["numero"] for e in r["confirmados"]] == ["101"]  # contíguo
+    assert [e["numero"] for e in r["provaveis"]] == ["100"]  # composto (a verificar)

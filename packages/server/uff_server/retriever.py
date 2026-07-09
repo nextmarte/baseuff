@@ -7,6 +7,7 @@ servidor MCP fica testável sem torch. A busca aceita filtro por fonte.
 
 from __future__ import annotations
 
+import re
 import unicodedata
 from dataclasses import dataclass
 from typing import Protocol
@@ -192,20 +193,47 @@ def retrieve(
     return _diversify(ranked, limit, max_per_doc)
 
 
+def _name_gap_pattern(nome: str, max_gap: int = 3):
+    """Regex: tokens do nome EM ORDEM com até ``max_gap`` palavras entre eles (pega nomes
+    compostos, ex.: 'Mariana Marinho Peixoto' casa 'Mariana Marinho da Costa Lima Peixoto')."""
+    toks = [re.escape(t) for t in _fold(nome).split() if len(t) >= 2]
+    if not toks:
+        return None
+    joiner = rf"(?:\s+\w+){{0,{max_gap}}}\s+"
+    return re.compile(r"\b" + joiner.join(toks) + r"\b")
+
+
+def _dossier_entry(pay: dict, nome: str) -> dict:
+    return {
+        "numero": pay.get("numero"),
+        "source": pay.get("source"),
+        "publish_date": pay.get("publish_date"),
+        "url": pay.get("url"),
+        "snippet": snippet_around(pay.get("text", ""), nome),
+    }
+
+
 def dossier(
     client: QdrantClient,
     collection: str,
     nome: str,
     *,
     source: str | None = "boletim",
-    max_scan: int = 4000,
-) -> list[dict]:
-    """Levantamento EXAUSTIVO por pessoa/entidade (não top-k): varre todo o acervo com
-    full-text (MatchText), pós-filtra pela ocorrência do nome contíguo (precisão),
-    deduplica por documento e ordena cronologicamente. Fecha a limitação do top-k."""
+    max_scan: int = 6000,
+) -> dict:
+    """Levantamento EXAUSTIVO por pessoa/entidade (não top-k). Varre todo o acervo (full-text
+    MatchText) e classifica cada documento em dois níveis, deduplicado por doc e cronológico:
+
+    - ``confirmados``: nome CONTÍGUO no texto (alta precisão — é a pessoa).
+    - ``provaveis``: mesmos tokens em ORDEM com partes no meio (recupera nomes compostos, ex.:
+      'Mariana Marinho Peixoto' → 'Mariana Marinho da Costa Lima Peixoto'). Podem incluir
+      homônimos com sobrenomes intermediários — o cliente deve VERIFICAR.
+    """
     alvo = _fold(nome)
+    pattern = _name_gap_pattern(nome)
     query_filter = _build_filter(source=source, text_match=nome)
-    seen: dict[tuple, dict] = {}
+    conf: dict[tuple, dict] = {}
+    prov: dict[tuple, dict] = {}
     offset = None
     scanned = 0
     while scanned < max_scan:
@@ -219,21 +247,22 @@ def dossier(
         for p in points:
             scanned += 1
             pay = p.payload or {}
-            if alvo in _fold(pay.get("text", "")):  # pós-filtro: nome contíguo
-                key = (pay.get("source"), pay.get("numero"), pay.get("publish_date"))
-                seen.setdefault(
-                    key,
-                    {
-                        "numero": pay.get("numero"),
-                        "source": pay.get("source"),
-                        "publish_date": pay.get("publish_date"),
-                        "url": pay.get("url"),
-                        "snippet": snippet_around(pay.get("text", ""), nome),
-                    },
-                )
+            folded = _fold(pay.get("text", ""))
+            key = (pay.get("source"), pay.get("numero"), pay.get("publish_date"))
+            if alvo in folded:
+                conf.setdefault(key, _dossier_entry(pay, nome))
+            elif pattern is not None and pattern.search(folded):
+                prov.setdefault(key, _dossier_entry(pay, nome))
         if offset is None:
             break
-    return sorted(seen.values(), key=lambda e: e.get("publish_date") or "")
+    # um documento confirmado não deve reaparecer entre os prováveis
+    for key in conf:
+        prov.pop(key, None)
+    by_date = lambda e: e.get("publish_date") or ""  # noqa: E731
+    return {
+        "confirmados": sorted(conf.values(), key=by_date),
+        "provaveis": sorted(prov.values(), key=by_date),
+    }
 
 
 def get_document(
