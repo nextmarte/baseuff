@@ -78,12 +78,18 @@ class BearerAuthMiddleware:
         docs_provider: Callable[[], dict] | None = None,
         docs_path: str = "/mcp/docs",
         html_renderer: Callable[[dict], str] | None = None,
+        admin_html: str | None = None,
+        admin_provider: Callable[[dict], dict] | None = None,
+        admin_authorized: Callable[[str], bool] | None = None,
     ) -> None:
         self.app = app
         self.token_path = token_path
         self.docs_provider = docs_provider
         self.docs_path = docs_path
         self.html_renderer = html_renderer
+        self.admin_html = admin_html
+        self.admin_provider = admin_provider
+        self.admin_authorized = admin_authorized
         self._mtime = -1.0
         self._tokens: set[str] = set()
         self._agents: dict[str, str] = {}
@@ -102,6 +108,28 @@ class BearerAuthMiddleware:
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
+            return
+        # Painel de administração (HTTP Basic próprio): /mcp/admin (HTML) e /mcp/admin/api (JSON).
+        path0 = scope.get("path", "").rstrip("/") or "/"
+        if self.admin_provider is not None and path0 in ("/mcp/admin", "/mcp/admin/api"):
+            headers = dict(scope.get("headers") or [])
+            auth = headers.get(b"authorization", b"").decode("latin-1")
+            if self.admin_authorized is None or not self.admin_authorized(auth):
+                resp = JSONResponse(
+                    {"error": "admin auth required"},
+                    status_code=401,
+                    headers={"WWW-Authenticate": 'Basic realm="BaseUFF Admin"'},
+                )
+                await resp(scope, receive, send)
+                return
+            if path0 == "/mcp/admin/api":
+                from urllib.parse import parse_qs
+
+                qs = parse_qs(scope.get("query_string", b"").decode("latin-1"))
+                params = {k: v[0] for k, v in qs.items()}
+                await JSONResponse(self.admin_provider(params))(scope, receive, send)
+            else:
+                await HTMLResponse(self.admin_html or "")(scope, receive, send)
             return
         # Documentação pública (sem auth): GET em /mcp/docs, ou GET na raiz /mcp de um
         # navegador (Accept sem text/event-stream). Cliente MCP real (POST/SSE) segue p/ auth.

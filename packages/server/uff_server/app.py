@@ -355,7 +355,11 @@ def create_app(
                 d["snippet"] = mask_cpf(d.get("snippet"))
         conf, prov = res["confirmados"], res["provaveis"]
         _record(
-            "dossie", nome, t0, len(conf) + len(prov), source=source,
+            "dossie",
+            nome,
+            t0,
+            len(conf) + len(prov),
+            source=source,
             top_results=[
                 {"numero": d["numero"], "publish_date": d["publish_date"]} for d in conf[:3]
             ],

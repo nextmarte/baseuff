@@ -3,8 +3,13 @@ from uff_server.retriever import SearchResult, _diversify
 
 def _sr(doc_id: int, score: float) -> SearchResult:
     return SearchResult(
-        score=score, doc_id=doc_id, source="boletim", numero=str(doc_id),
-        publish_date=None, url=None, text=f"texto {doc_id}",
+        score=score,
+        doc_id=doc_id,
+        source="boletim",
+        numero=str(doc_id),
+        publish_date=None,
+        url=None,
+        text=f"texto {doc_id}",
     )
 
 

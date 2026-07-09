@@ -14,6 +14,18 @@ from __future__ import annotations
 import json
 import sqlite3
 
+
+def _percentis(values: list[float]) -> dict:
+    if not values:
+        return {"p50": 0, "p95": 0, "max": 0, "media": 0}
+    s = sorted(values)
+
+    def pct(p: float) -> int:
+        return int(s[min(len(s) - 1, round((p / 100) * (len(s) - 1)))])
+
+    return {"p50": pct(50), "p95": pct(95), "max": int(max(s)), "media": int(sum(s) / len(s))}
+
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS queries (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -96,3 +108,77 @@ class QueryLog:
             d["top_results"] = json.loads(d.get("top_results") or "[]")
             out.append(d)
         return out
+
+    def aggregates(self) -> dict:
+        """Métricas agregadas para o painel (por dia/tool/agente/fonte, latência, lacunas)."""
+        conn = self._connect()
+        try:
+
+            def grp(col: str) -> list[list]:
+                rows = conn.execute(
+                    f"SELECT COALESCE({col},'—') k, COUNT(*) n FROM queries "
+                    f"GROUP BY k ORDER BY n DESC"
+                ).fetchall()
+                return [[r["k"], r["n"]] for r in rows]
+
+            total = conn.execute("SELECT COUNT(*) n FROM queries").fetchone()["n"]
+            lat = [
+                r["latency_ms"]
+                for r in conn.execute(
+                    "SELECT latency_ms FROM queries WHERE latency_ms IS NOT NULL"
+                ).fetchall()
+            ]
+            per_day = [
+                [r["d"], r["n"]]
+                for r in conn.execute(
+                    "SELECT substr(ts,1,10) d, COUNT(*) n FROM queries GROUP BY d ORDER BY d"
+                ).fetchall()
+            ]
+            agentes = conn.execute("SELECT COUNT(DISTINCT agent) n FROM queries").fetchone()["n"]
+            erros = conn.execute(
+                "SELECT COUNT(*) n FROM queries WHERE error IS NOT NULL"
+            ).fetchone()["n"]
+            # lacunas: dossiê/get sem resultado, ou busca cujo melhor score < 0.55
+            gaps = conn.execute(
+                "SELECT COUNT(*) n FROM queries WHERE "
+                "(tool IN ('dossie','get_documento') AND n_results=0)"
+            ).fetchone()["n"]
+            periodo = conn.execute("SELECT MIN(ts) a, MAX(ts) b FROM queries").fetchone()
+            return {
+                "total": total,
+                "agentes": agentes,
+                "erros": erros,
+                "lacunas": gaps,
+                "periodo": [periodo["a"], periodo["b"]],
+                "latencia": _percentis(lat),
+                "por_dia": per_day,
+                "por_tool": grp("tool"),
+                "por_agente": grp("agent"),
+                "por_fonte": grp("source"),
+            }
+        finally:
+            conn.close()
+
+    def page(
+        self, limit: int = 25, offset: int = 0, agent: str | None = None, tool: str | None = None
+    ) -> tuple[int, list[dict]]:
+        """Página de consultas (mais recentes primeiro) com filtro opcional por agente/tool."""
+        where, params = [], []
+        if agent:
+            where.append("agent = ?")
+            params.append(agent)
+        if tool:
+            where.append("tool = ?")
+            params.append(tool)
+        clause = (" WHERE " + " AND ".join(where)) if where else ""
+        conn = self._connect()
+        try:
+            total = conn.execute(f"SELECT COUNT(*) n FROM queries{clause}", params).fetchone()["n"]
+            rows = conn.execute(
+                f"SELECT ts,agent,tool,query,source,n_results,latency_ms,error "
+                f"FROM queries{clause} ORDER BY id DESC LIMIT ? OFFSET ?",
+                [*params, limit, offset],
+            ).fetchall()
+        finally:
+            conn.close()
+        return total, [dict(r) for r in rows]
