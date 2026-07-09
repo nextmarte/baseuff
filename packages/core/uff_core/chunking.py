@@ -18,6 +18,7 @@ _SOURCE_LABEL = {
     Source.STI_MANUAL: "Manual STI",
     Source.STI_KB: "Base de Conhecimento STI",
     Source.PESQUISA: "Portal da Pesquisa",
+    Source.GUIA: "Guia do Estudante",
 }
 
 _PARAGRAPH_RE = re.compile(r"\n\s*\n")

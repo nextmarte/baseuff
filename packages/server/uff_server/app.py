@@ -34,6 +34,14 @@ SOURCES = {
         "iniciação científica, chamadas internas, cronogramas e resultados. "
         "NÃO é um banco de perfis de pesquisadores."
     ),
+    "guia": (
+        "Guia do Estudante e da Comunidade (www.uff.br) — TUTORIAIS e serviços voltados a ALUNOS "
+        "e ao público: como EMITIR/obter 2ª via de DIPLOMA e histórico, colação de grau, "
+        "matrícula, trancamento, carteirinha UFF, bibliotecas, bolsas/auxílios estudantis, "
+        "estágios, mobilidade internacional e a Carta de Serviços. Passo a passo, requisitos, "
+        "prazos e setor responsável. Use para 'COMO faço X?' do estudante/comunidade "
+        "(diferente do sti_kb, que é manual dos SISTEMAS para servidores)."
+    ),
 }
 
 # Natureza de cada fonte: TUTORIAL (como fazer, passo a passo) vs DOCUMENTO (ato/registro
@@ -43,6 +51,7 @@ SOURCE_KIND = {
     "resolucao": "documento",
     "pesquisa": "documento",
     "sti_kb": "tutorial",
+    "guia": "tutorial",
 }
 KIND_LABEL = {
     "tutorial": "Tutorial — passo a passo / como fazer",
@@ -88,6 +97,8 @@ POSSIBILIDADES = [
     "Obter o texto de uma portaria/resolução pelo número (ex.: 'Resolução CEPEx 3.779').",
     "Aprender o passo a passo de um sistema da UFF (ex.: 'como preencher o RAD', 'registrar "
     "diploma') em source='sti_kb' — inclui texto das telas (OCR).",
+    "Orientar um ALUNO/cidadão em serviços da UFF (emitir 2ª via de diploma, colação de grau, "
+    "matrícula, carteirinha, bolsas, estágio) em source='guia' — passo a passo e requisitos.",
     "Consultar editais e bolsas de pesquisa (PIBIC, iniciação científica) em source='pesquisa'.",
     "Buscar por tema livre (ex.: 'convênio', 'afastamento no exterior') em todo o acervo.",
 ]
@@ -102,6 +113,10 @@ EXEMPLOS = [
     {
         "objetivo": "como usar o sistema RAD",
         "chamada": "search('preencher RAD atividades de ensino', source='sti_kb')",
+    },
+    {
+        "objetivo": "aluno: emitir 2ª via de diploma",
+        "chamada": "search('segunda via de diploma e histórico como solicitar', source='guia')",
     },
     {
         "objetivo": "edital PIBIC",
