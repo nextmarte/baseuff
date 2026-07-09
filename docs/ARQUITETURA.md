@@ -42,7 +42,12 @@ Dois hosts, ligados pela rede interna da UFF:
 
 1. **Descoberta** (`scripts/crawl.py` → conectores em `uff_ingest/connectors/`): respeita
    robots, deduplica por `(source, url)`, persiste no catálogo com status `DISCOVERED`.
-   STI KB é caso à parte: `scripts/crawl_citsmart.py` (Playwright, SPA CITSmart).
+   Dois casos à parte, que já salvam HTML e vão direto a `FETCHED`:
+   - **STI KB** (`scripts/crawl_citsmart.py`): Playwright na SPA CITSmart.
+   - **guia** (`scripts/crawl_guia.py`): REST do WordPress de `www.uff.br` (httpx, sem navegador) —
+     `faqs` (resposta limpa em `content.rendered`), `servico` (Carta de Serviços em Divi; salva a
+     página e o trafilatura extrai no pipeline) e a página de diploma/formatura. Filtra conteúdo de
+     **servidor** por taxonomia (`categoria-de-servico`/`faq_groups`; `SERVIDOR_KW` por nome).
 2. **Download** (`scripts/download.py`): baixa `DISCOVERED` → `data/raw/<fonte>/<id>.<ext>`,
    SHA-256, status `FETCHED`. STI KB ainda passa por `enrich_sti_kb.py` (OCR das telas).
 3. **Indexação** (`run_batch.py` no skynet01): para cada `FETCHED` do shard
@@ -61,10 +66,18 @@ pula documentos cujo 1º chunk já existe no Qdrant. Reexecutar processa só o d
 1. Agente chama uma tool MCP com `Authorization: Bearer <token>`.
 2. `retriever.retrieve`: encode remoto da query → duas pernas no Qdrant (denso + esparso)
    fundidas por **RRF** → over-fetch de ~24 candidatos → **reranker em cascata**
-   (ColBERT pré-seleciona 8 → cross-encoder finaliza) → top-k com snippet destacado.
-3. `dossie` não usa top-k: filtro **full-text** (MatchText) varre todo o acervo, pós-filtra
-   pela ocorrência contígua do nome, deduplica por documento e ordena por data.
+   (ColBERT pré-seleciona 8 → cross-encoder finaliza) → **diversificação por documento**
+   (`_diversify`, máx. 2 trechos do mesmo doc) → top-k com snippet destacado.
+3. `dossie` não usa top-k: filtro **full-text** (MatchText) varre todo o acervo e classifica cada
+   documento em **dois níveis** — `confirmados` (nome **contíguo** no texto) e `provaveis` (mesmos
+   tokens em ordem com até N palavras no meio, recupera nomes compostos); dedup por documento,
+   cronológico. Os prováveis podem conter homônimos → o cliente verifica.
 4. `get_documento` reagrupa todos os chunks de um `doc_id` na ordem original.
+
+Toda saída de tool passa por **`mask_cpf`** (`uff_server/pii.py`): CPF é anonimizado na entrega
+(`***.***.***-**`), sem tocar em nº de processo/SIAPE; o índice Qdrant permanece **cru**. Cada
+resultado carrega `natureza` (`tutorial`/`documento`), derivada de `SOURCE_KIND` em tempo de consulta
+(não fica no payload → classificar uma fonte não exige re-embed).
 
 Índices de payload no Qdrant (`scripts/reindex_payload.py`, sem re-embed): `text` (full-text),
 `publish_date` (datetime), `source`/`numero` (keyword), `doc_id` (integer).
@@ -76,6 +89,11 @@ pula documentos cujo 1º chunk já existe no Qdrant. Reexecutar processa só o d
   → onboard/revogação sem reiniciar nada e sem sudo (`./nova-chave.sh`).
 - **Doc pública** sem token: `GET /mcp/docs` (JSON) e `GET /mcp` de navegador (HTML wiki).
   Requisições MCP reais (POST / SSE) seguem exigindo token.
+- **Painel de administração** (`uff_server/admin.py`, `GET /mcp/admin` + `/mcp/admin/api`): **HTTP
+  Basic** próprio (usuário `admin`, hash sha256 em `data/admin_pass.hash`, fora do git). Mostra saúde
+  (Qdrant/encoder/acervo), KPIs, gráficos e a tabela paginada de consultas (CPF mascarado); permite
+  drill-down (clicar numa consulta a re-executa), emitir chave de agente e logout. `/mcp/admin/logout`
+  é público (landing após limpar o Basic Auth).
 - **Apache**: `ProxyPass /mcp → 127.0.0.1:8088`, TLS do certificado `www.cid-uff.net`.
   ⚠️ **Pegadinha deste servidor:** `sites-enabled/` contém **cópias** dos vhosts (não symlinks) —
   editar o arquivo em `sites-enabled/` e recarregar. Ver `deploy/EXPOSICAO.md`.
@@ -99,8 +117,12 @@ resultados, latência e o topo dos resultados. `info()` (público) não é regis
 - **Serviços persistentes:** Qdrant (docker restart) · `baseuff-mcp` e `baseuff-encoder`
   (systemd `--user`, `loginctl enable-linger`, auto-restart + boot).
 - **Atualização automática (cron no ultron):** diário 6h `boletim,pesquisa`; semanal
-  domingo 3h `atos,sti_kb`. Orquestrador `scripts/update.py` (lock anti-sobreposição,
+  domingo 3h `atos,sti_kb,guia`. Orquestrador `scripts/update.py` (lock anti-sobreposição,
   incremental) faz descobrir→baixar→rsync→embed no skynet01→Qdrant.
+  ⚠️ **cron tem PATH mínimo**: o `update.py` resolve o `uv` por caminho absoluto
+  (`shutil.which("uv")` + fallback `~/.local/bin/uv`); chamar `"uv"` puro em subprocess falha com
+  `FileNotFoundError` sob cron. Ao adicionar uma fonte, sincronize `uff_core` para o worker
+  (`~/baseuff-worker/core`) antes do embed, senão `run_batch` quebra em `Source(<nova>)`.
 - **Deploy do worker:** `rsync` de `packages/embed` para `~/baseuff-worker/embed` no skynet01;
   `systemctl --user restart baseuff-encoder`.
 - **Avaliação:** `uv run python scripts/eval.py [--rerank|--colbert|--cascade] [--limit N]`
