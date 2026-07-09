@@ -36,18 +36,45 @@ SOURCES = {
     ),
 }
 
+# Natureza de cada fonte: TUTORIAL (como fazer, passo a passo) vs DOCUMENTO (ato/registro
+# oficial já publicado). O agente deve saber o que está lendo — vai em cada resultado (`natureza`).
+SOURCE_KIND = {
+    "boletim": "documento",
+    "resolucao": "documento",
+    "pesquisa": "documento",
+    "sti_kb": "tutorial",
+}
+KIND_LABEL = {
+    "tutorial": "Tutorial — passo a passo / como fazer",
+    "documento": "Documento oficial — ato, registro ou edital já publicado",
+}
+
+
+def natureza(source: str | None) -> str:
+    """Classe do conteúdo da fonte: 'tutorial' (como fazer) ou 'documento' (ato/registro oficial)."""
+    return SOURCE_KIND.get(source or "", "documento")
+
+
 INSTRUCTIONS = (
     "BaseUFF: busca semântica no acervo ABERTO da Universidade Federal Fluminense (UFF).\n\n"
+    "Duas NATUREZAS de conteúdo — saiba o que está entregando ao usuário (cada resultado traz "
+    "o campo `natureza`):\n"
+    "- **tutorial** = COMO FAZER, passo a passo (ex.: emitir diploma, usar um sistema). "
+    "Responde 'como eu faço X?'.\n"
+    "- **documento** = ato/registro/edital OFICIAL já publicado (o que a UFF decidiu/publicou). "
+    "Responde 'qual o ato?', 'quando?', 'quem?'. NÃO é instrução de procedimento.\n\n"
     "Fontes disponíveis (parâmetro `source` da tool `search`):\n"
-    + "\n".join(f"- {k}: {v}" for k, v in SOURCES.items())
+    + "\n".join(f"- {k} [{natureza(k)}]: {v}" for k, v in SOURCES.items())
     + "\n\nEstratégia (qual tool usar):\n"
+    "- **Como fazer algo** (diploma, matrícula, usar um sistema) → `search(query, source='sti_kb')`: "
+    "conteúdo `natureza=tutorial`.\n"
     "- **Tema/assunto** → `search(query, source?, date_from?, date_to?, limit)`: híbrido+reranker; "
     "fixe `source`/período quando souber (boletim domina o acervo).\n"
     "- **Todos os atos de uma PESSOA** (dossiê de progressão, histórico) → `dossie(nome, source)`: "
     "EXAUSTIVO (não top-k), varre todo o acervo, dedup por documento, cronológico.\n"
     "- **Ler um ato/documento inteiro** → `get_documento(doc_id)` (doc_id vem no `search`).\n"
     "- **Dimensão do acervo** → `info()`.\n"
-    "- Cada resultado traz citação rastreável: número, data, URL do PDF e um trecho.\n\n"
+    "- Cada resultado traz citação rastreável: número, data, URL e um trecho, além da `natureza`.\n\n"
     "Limitações (seja honesto com o usuário): só conteúdo PÚBLICO já publicado. NÃO há acesso a "
     "SIAPE/SiapeNet, sistemas internos, dados financeiros detalhados nem cadastro de servidores. "
     "Boletins escaneados antigos podem ter ruído de OCR. "
@@ -99,6 +126,7 @@ def build_docs(client: QdrantClient, collection: str, catalog=None) -> dict:
     for src, descricao in SOURCES.items():
         c = cat.get(src, {})
         acervo[src] = {
+            "natureza": natureza(src),
             "tipo": descricao,
             "documentos": c.get("documentos"),
             "trechos_indexados": chunks[src],
@@ -109,6 +137,7 @@ def build_docs(client: QdrantClient, collection: str, catalog=None) -> dict:
     return {
         "servidor": "BaseUFF — RAG sobre o acervo aberto da Universidade Federal Fluminense",
         "instructions": INSTRUCTIONS,
+        "naturezas": KIND_LABEL,
         "acervo": acervo,
         "tamanho": {
             "total_documentos": total_docs,
@@ -146,7 +175,7 @@ def render_docs_html(docs: dict) -> str:
     fontes_cards = "".join(
         f"""
         <div class="card" id="fonte-{esc(src)}">
-          <h3><span class="pill">{esc(src)}</span></h3>
+          <h3><span class="pill">{esc(src)}</span> <span class="pill kind-{esc(a.get("natureza"))}">{esc(a.get("natureza"))}</span></h3>
           <p>{esc(a.get("tipo"))}</p>
           <div class="meta">
             <span><b>{esc(a.get("documentos"))}</b> documentos</span>
@@ -183,6 +212,8 @@ def render_docs_html(docs: dict) -> str:
   .card {{ background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px 18px; margin:12px 0; }}
   .card h3 {{ margin:0 0 8px; }}
   .pill {{ background:var(--acc); color:#fff; padding:2px 10px; border-radius:20px; font-size:13px; }}
+  .kind-tutorial {{ background:#1baf7a; }}
+  .kind-documento {{ background:#4a3aa7; }}
   .meta {{ display:flex; gap:18px; flex-wrap:wrap; color:var(--mut); font-size:14px; margin-top:8px; }}
   code {{ background:var(--line); padding:2px 6px; border-radius:6px; font-size:13.5px; }}
   pre {{ background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; overflow:auto; }}
@@ -311,6 +342,7 @@ def create_app(
                 "doc_id": r.doc_id,
                 "numero": r.numero,
                 "source": r.source,
+                "natureza": natureza(r.source),
                 "publish_date": r.publish_date,
                 "url": r.url,
                 "snippet": mask_cpf(snippet_around(r.text, query)),
@@ -353,6 +385,7 @@ def create_app(
         for bucket in ("confirmados", "provaveis"):
             for d in res[bucket]:  # anonimiza o snippet entregue (índice permanece cru)
                 d["snippet"] = mask_cpf(d.get("snippet"))
+                d["natureza"] = natureza(d.get("source"))
         conf, prov = res["confirmados"], res["provaveis"]
         _record(
             "dossie",
@@ -385,6 +418,7 @@ def create_app(
         doc = get_document(client, collection, doc_id=doc_id, numero=numero, source=source)
         if doc:  # anonimiza o texto entregue (índice permanece cru)
             doc["texto"] = mask_cpf(doc["texto"])
+            doc["natureza"] = natureza(doc.get("source"))
         _record("get_documento", str(doc_id or numero), t0, 1 if doc else 0, source=source)
         return doc
 

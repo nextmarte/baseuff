@@ -54,6 +54,16 @@ async def test_search_tool_end_to_end():
     assert data[0]["numero"] == "159"
     assert data[0]["url"].endswith("1.pdf")
     assert "licença" in data[0]["snippet"]
+    assert data[0]["natureza"] == "documento"  # boletim é ato oficial, não tutorial
+
+
+async def test_natureza_classifica_tutorial_vs_documento():
+    from uff_server.app import natureza
+
+    assert natureza("sti_kb") == "tutorial"
+    assert natureza("boletim") == "documento"
+    assert natureza("pesquisa") == "documento"
+    assert natureza(None) == "documento"  # default seguro
 
 
 async def test_search_tool_is_registered():
