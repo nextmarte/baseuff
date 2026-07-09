@@ -81,6 +81,7 @@ class BearerAuthMiddleware:
         admin_html: str | None = None,
         admin_provider: Callable[[dict], dict] | None = None,
         admin_authorized: Callable[[str], bool] | None = None,
+        admin_logout_html: str | None = None,
     ) -> None:
         self.app = app
         self.token_path = token_path
@@ -90,6 +91,7 @@ class BearerAuthMiddleware:
         self.admin_html = admin_html
         self.admin_provider = admin_provider
         self.admin_authorized = admin_authorized
+        self.admin_logout_html = admin_logout_html
         self._mtime = -1.0
         self._tokens: set[str] = set()
         self._agents: dict[str, str] = {}
@@ -109,8 +111,12 @@ class BearerAuthMiddleware:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
-        # Painel de administração (HTTP Basic próprio): /mcp/admin (HTML) e /mcp/admin/api (JSON).
+        # Página pública de saída do painel (sem auth): landing após limpar o Basic Auth.
         path0 = scope.get("path", "").rstrip("/") or "/"
+        if self.admin_provider is not None and path0 == "/mcp/admin/logout":
+            await HTMLResponse(self.admin_logout_html or "Você saiu.")(scope, receive, send)
+            return
+        # Painel de administração (HTTP Basic próprio): /mcp/admin (HTML) e /mcp/admin/api (JSON).
         if self.admin_provider is not None and path0 in ("/mcp/admin", "/mcp/admin/api"):
             headers = dict(scope.get("headers") or [])
             auth = headers.get(b"authorization", b"").decode("latin-1")

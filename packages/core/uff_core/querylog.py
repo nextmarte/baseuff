@@ -159,6 +159,38 @@ class QueryLog:
         finally:
             conn.close()
 
+    def get(self, qid: int) -> dict | None:
+        """Uma consulta pelo id (query CRUA, para re-executar no painel). None se não existir."""
+        conn = self._connect()
+        try:
+            r = conn.execute("SELECT * FROM queries WHERE id = ?", (qid,)).fetchone()
+        finally:
+            conn.close()
+        if r is None:
+            return None
+        d = dict(r)
+        d["top_results"] = json.loads(d.get("top_results") or "[]")
+        return d
+
+    def detail(self, kind: str, limit: int = 200) -> list[dict]:
+        """Lista de consultas por categoria para o drill-down do painel:
+        ``lacunas`` (dossiê/doc 0 resultados), ``erros``, ``lentas`` (mais lentas)."""
+        cols = "id,ts,agent,tool,query,source,date_from,date_to,n_results,latency_ms,error"
+        sql = {
+            "lacunas": f"SELECT {cols} FROM queries WHERE tool IN ('dossie','get_documento') "
+            f"AND n_results=0 ORDER BY id DESC LIMIT ?",
+            "erros": f"SELECT {cols} FROM queries WHERE error IS NOT NULL ORDER BY id DESC LIMIT ?",
+            "lentas": f"SELECT {cols} FROM queries ORDER BY latency_ms DESC LIMIT ?",
+        }.get(kind)
+        if not sql:
+            return []
+        conn = self._connect()
+        try:
+            rows = conn.execute(sql, (limit,)).fetchall()
+        finally:
+            conn.close()
+        return [dict(r) for r in rows]
+
     def page(
         self, limit: int = 25, offset: int = 0, agent: str | None = None, tool: str | None = None
     ) -> tuple[int, list[dict]]:
@@ -175,7 +207,7 @@ class QueryLog:
         try:
             total = conn.execute(f"SELECT COUNT(*) n FROM queries{clause}", params).fetchone()["n"]
             rows = conn.execute(
-                f"SELECT ts,agent,tool,query,source,n_results,latency_ms,error "
+                "SELECT id,ts,agent,tool,query,source,date_from,date_to,n_results,latency_ms,error "
                 f"FROM queries{clause} ORDER BY id DESC LIMIT ? OFFSET ?",
                 [*params, limit, offset],
             ).fetchall()

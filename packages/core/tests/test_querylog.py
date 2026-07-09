@@ -47,3 +47,30 @@ def test_zero_results_query_is_recorded(tmp_path):
     ql = QueryLog(str(tmp_path / "q.db"))
     ql.log(_entry(query="kubernetes", n_results=0, top_results=[]))
     assert ql.recent()[0]["n_results"] == 0
+
+
+def test_get_returns_raw_query_by_id(tmp_path):
+    ql = QueryLog(str(tmp_path / "q.db"))
+    ql.log(_entry(query="Fulano CPF 123.456.789-00", source="boletim"))
+    qid = ql.recent()[0]["id"]
+    got = ql.get(qid)
+    assert got is not None
+    assert got["query"] == "Fulano CPF 123.456.789-00"  # crua (o painel mascara na saída)
+    assert got["source"] == "boletim"
+    assert ql.get(999999) is None
+
+
+def test_detail_buckets(tmp_path):
+    ql = QueryLog(str(tmp_path / "q.db"))
+    ql.log(_entry(tool="dossie", query="Ninguém", n_results=0))  # lacuna
+    ql.log(_entry(tool="search", query="ok", n_results=5, latency_ms=100))
+    ql.log(_entry(tool="search", query="lenta", n_results=1, latency_ms=9000))
+    ql.log(_entry(tool="search", query="quebrou", error="boom"))  # erro
+    lac = ql.detail("lacunas")
+    assert [r["query"] for r in lac] == ["Ninguém"]
+    assert all("id" in r for r in lac)
+    err = ql.detail("erros")
+    assert [r["query"] for r in err] == ["quebrou"]
+    lentas = ql.detail("lentas")
+    assert lentas[0]["query"] == "lenta"  # ordenado por latência desc
+    assert ql.detail("inexistente") == []

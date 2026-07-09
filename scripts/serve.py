@@ -16,7 +16,7 @@ from qdrant_client import QdrantClient
 from uff_core.catalog import Catalog
 from uff_core.config import Settings, sqlite_path
 from uff_core.querylog import QueryLog
-from uff_server.admin import admin_data, render_admin_html, verify_basic
+from uff_server.admin import admin_data, render_admin_html, render_logout_html, verify_basic
 from uff_server.app import build_docs, create_app, render_docs_html
 from uff_server.auth import BearerAuthMiddleware
 from uff_server.encoder import RemoteEncoder
@@ -56,8 +56,17 @@ def main() -> None:
         if admin_hash:
             admin_kwargs = {
                 "admin_html": render_admin_html(),
+                "admin_logout_html": render_logout_html(),
                 "admin_provider": lambda p: admin_data(
-                    querylog, client, collection, catalog, settings.encoder_url, p
+                    querylog,
+                    client,
+                    collection,
+                    catalog,
+                    settings.encoder_url,
+                    p,
+                    encoder=encoder,
+                    reranker=reranker,
+                    tokens_path=settings.mcp_tokens_path,
                 ),
                 "admin_authorized": lambda auth: verify_basic(auth, "admin", admin_hash),
             }
