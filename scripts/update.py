@@ -15,11 +15,15 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
+# O cron tem PATH mínimo (sem ~/.local/bin), então resolvemos o `uv` absoluto: chamar
+# só "uv" no subprocess falha com FileNotFoundError sob cron.
+UV = shutil.which("uv") or os.path.expanduser("~/.local/bin/uv")
 KEY = os.path.expanduser("~/.ssh/id_ed25519_baseuff")
 HOST = "marcus@cid-uff.net"
 # (porta ssh, shard) — só skynet01 (skynet02 fica livre para outros serviços)
@@ -68,13 +72,13 @@ def ingest(source: str) -> None:
     """Descoberta + download do delta de uma fonte (no ultron)."""
     if source == "guia":
         # Tutoriais do estudante (www.uff.br via REST); idempotente, pula o já baixado.
-        sh(["uv", "run", "python", "scripts/crawl_guia.py"], cwd=REPO)
+        sh([UV, "run", "python", "scripts/crawl_guia.py"], cwd=REPO)
         return
     if source == "sti_kb":
-        sh(["uv", "run", "--with", "playwright", "python", "scripts/crawl_citsmart.py"], cwd=REPO)
+        sh([UV, "run", "--with", "playwright", "python", "scripts/crawl_citsmart.py"], cwd=REPO)
         sh(
             [
-                "uv",
+                UV,
                 "run",
                 "--with",
                 "rapidocr-onnxruntime",
@@ -88,9 +92,9 @@ def ingest(source: str) -> None:
             cwd=REPO,
         )
         return
-    sh(["uv", "run", "python", "scripts/crawl.py", "--source", source], cwd=REPO)
+    sh([UV, "run", "python", "scripts/crawl.py", "--source", source], cwd=REPO)
     if source != "atos":  # atos é só índice de metadados (não baixa binários)
-        sh(["uv", "run", "python", "scripts/download.py", "--source", source], cwd=REPO)
+        sh([UV, "run", "python", "scripts/download.py", "--source", source], cwd=REPO)
 
 
 def embed(sources: list[str]) -> None:
