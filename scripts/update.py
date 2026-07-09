@@ -66,6 +66,10 @@ def release_lock() -> None:
 
 def ingest(source: str) -> None:
     """Descoberta + download do delta de uma fonte (no ultron)."""
+    if source == "guia":
+        # Tutoriais do estudante (www.uff.br via REST); idempotente, pula o já baixado.
+        sh(["uv", "run", "python", "scripts/crawl_guia.py"], cwd=REPO)
+        return
     if source == "sti_kb":
         sh(["uv", "run", "--with", "playwright", "python", "scripts/crawl_citsmart.py"], cwd=REPO)
         sh(

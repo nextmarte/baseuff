@@ -124,22 +124,24 @@ class Rest:
         self.c = client
         self.pause = pause
 
-    def get(self, url: str, **kw) -> httpx.Response:
+    def get(self, url: str, **kw) -> httpx.Response | None:
+        """GET com retries. Retorna a resposta 200, ou None se falhar de vez (o chamador trata)."""
+        last: httpx.Response | None = None
         for attempt in range(4):
             try:
-                r = self.c.get(url, **kw)
-                if r.status_code == 200:
+                last = self.c.get(url, **kw)
+                if last.status_code == 200:
                     time.sleep(self.pause)
-                    return r
+                    return last
             except httpx.HTTPError:
-                pass
+                last = None
             time.sleep(1.5 * (attempt + 1))
-        return r  # última resposta (pode ser != 200; o chamador trata)
+        return last  # pode ser None ou uma resposta != 200
 
     def terms(self, tax_base: str) -> dict[int, str]:
         out: dict[int, str] = {}
         r = self.get(f"{BASE}/wp-json/wp/v2/{tax_base}", params={"per_page": 100})
-        if r.status_code == 200:
+        if r is not None and r.status_code == 200:
             for t in r.json():
                 out[t["id"]] = t.get("name") or ""
         return out
@@ -152,7 +154,7 @@ class Rest:
                 f"{BASE}/wp-json/wp/v2/{base}",
                 params={"per_page": 100, "page": page, "orderby": "title", "order": "asc"},
             )
-            if r.status_code != 200:
+            if r is None or r.status_code != 200:
                 break
             items = r.json()
             if not items:
@@ -162,6 +164,18 @@ class Rest:
             if page >= total_pages:
                 break
             page += 1
+
+
+def already_have(catalog: Catalog, raw_dir: Path, url: str, force: bool) -> bool:
+    """True se o doc já foi baixado (para pular ANTES de refazer o fetch, no resume)."""
+    if force:
+        return False
+    existing = catalog.get_by_url(Source.GUIA, url)
+    return bool(
+        existing
+        and existing.status in (DocStatus.FETCHED, DocStatus.INDEXED)
+        and (raw_dir / f"{existing.id}.html").exists()
+    )
 
 
 def _save(
@@ -176,11 +190,8 @@ def _save(
     force: bool,
 ) -> str:
     """Registra o doc (GUIA) e grava o HTML em raw/guia/{id}.html. Retorna 'saved'|'skip'."""
-    existing = catalog.get_by_url(Source.GUIA, url)
-    if existing and not force:
-        f = raw_dir / f"{existing.id}.html"
-        if f.exists() and existing.status in (DocStatus.FETCHED, DocStatus.INDEXED):
-            return "skip"
+    if already_have(catalog, raw_dir, url, force):
+        return "skip"
     doc = catalog.upsert(
         Document(
             source=Source.GUIA,
@@ -235,8 +246,11 @@ def crawl_servico(
             drop += 1
             continue
         link = it["link"]
+        if already_have(catalog, raw_dir, link, force):  # resume: não re-baixa a página
+            skip += 1
+            continue
         page = rest.get(link)
-        if page.status_code != 200:
+        if page is None or page.status_code != 200:
             err += 1
             continue
         title = clean_title(it["title"]["rendered"])
@@ -261,8 +275,8 @@ def crawl_pages(rest: Rest, catalog: Catalog, raw_dir: Path, force: bool) -> Non
     saved = 0
     for url in PAGES:
         r = rest.get(url)
-        if r.status_code != 200:
-            print(f"[guia/pages] erro {r.status_code}: {url}")
+        if r is None or r.status_code != 200:
+            print(f"[guia/pages] erro em {url}")
             continue
         title = page_title(r.text, url.rstrip("/").rsplit("/", 1)[-1])
         res = _save(
