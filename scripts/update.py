@@ -74,6 +74,11 @@ def ingest(source: str) -> None:
         # Tutoriais do estudante (www.uff.br via REST); idempotente, pula o já baixado.
         sh([UV, "run", "python", "scripts/crawl_guia.py"], cwd=REPO)
         return
+    if source == "sbpc":
+        # 78ª RA da SBPC: programação/minicursos/sites/notícias/PDFs; checksum + purge
+        # no Qdrant quando um doc já indexado muda (a programação é viva até o evento).
+        sh([UV, "run", "python", "scripts/crawl_sbpc.py"], cwd=REPO)
+        return
     if source == "sti_kb":
         sh([UV, "run", "--with", "playwright", "python", "scripts/crawl_citsmart.py"], cwd=REPO)
         sh(

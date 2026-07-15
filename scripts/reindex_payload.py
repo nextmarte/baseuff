@@ -5,6 +5,7 @@ SEM re-embeddar os 392k trechos:
   - source       -> keyword: filtro por fonte (mais rápido)
   - publish_date -> datetime: filtro por período (date_from/date_to)
   - doc_id       -> integer: agrupar/recuperar um documento inteiro (get_documento)
+  - tipo         -> keyword: filtro por tipo de conteúdo (tool sbpc: mesa-redonda, minicurso…)
 
 Idempotente: recriar um índice existente é no-op (só loga). Uso:
 
@@ -47,6 +48,7 @@ def main() -> None:
     ensure_index(client, coll, "publish_date", models.PayloadSchemaType.DATETIME, "datetime")
     ensure_index(client, coll, "doc_id", models.PayloadSchemaType.INTEGER, "integer")
     ensure_index(client, coll, "numero", models.PayloadSchemaType.KEYWORD, "keyword")
+    ensure_index(client, coll, "tipo", models.PayloadSchemaType.KEYWORD, "keyword")
 
     schema = client.get_collection(coll).payload_schema
     print("\n[idx] payload_schema atual:")
