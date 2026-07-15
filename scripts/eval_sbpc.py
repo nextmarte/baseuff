@@ -39,7 +39,8 @@ SCENARIOS: list[tuple[str, str, str | None, str | None, list[str], bool]] = [
     # --- 1. programação por dia ---
     ("dia_abertura", "sessão solene de abertura", "2026-07-26", None, ["solene"], True),
     ("dia_cotas", "cotas e equidade nas instituições", "2026-07-29", None, ["cotas"], True),
-    ("dia_sem_filtro_data_errada", "sessão solene de abertura", "2026-07-28", None, [], False),
+    # negativo: a abertura é 26/07 — filtrar 28/07 NÃO pode trazê-la (outros hits do dia ok)
+    ("neg_dia_errado", "sessão solene de abertura", "2026-07-28", None, ["solene"], False),
     # --- 2. programação por tema ---
     ("tema_ia", "inteligência artificial", None, None, ["inteligencia artificial"], False),
     ("tema_juventude", "saúde mental da juventude", None, None, ["juventude"], True),
@@ -50,6 +51,14 @@ SCENARIOS: list[tuple[str, str, str | None, str | None, list[str], bool]] = [
         None,
         None,
         ["indigena"],
+        False,
+    ),
+    (
+        "tema_atividade_indigena",  # agente que quer a ATIVIDADE restringe por tipo
+        "universidade indígena para o Brasil estado atual",
+        None,
+        "conferencia",
+        ["universidade indigena"],
         True,
     ),
     # --- 3. por tipo ---
@@ -71,9 +80,18 @@ SCENARIOS: list[tuple[str, str, str | None, str | None, list[str], bool]] = [
     ),
     ("tipo_webminicurso", "HPLC cromatografia", None, "webminicurso", ["hplc"], False),
     ("tipo_oficina", "criação de conteúdo no TikTok", None, "oficina", ["tiktok"], True),
-    ("tipo_errado_vazio", "Marie Curie visita ao Brasil", None, "minicurso", [], False),
+    # negativo: com tipo=minicurso a conferência da Marie Curie não pode aparecer
+    ("neg_tipo_errado", "Marie Curie visita ao Brasil", None, "minicurso", ["marie curie"], False),
     # --- 4. pessoas (coordenador/palestrante; exaustivo é o dossie) ---
-    ("pessoa_ildeu", "Ildeu de Castro Moreira", None, None, ["ildeu"], True),
+    ("pessoa_ildeu", "Ildeu de Castro Moreira", None, None, ["ildeu"], False),
+    (
+        "pessoa_atividade",  # "em que atividade fulano participa?" -> restringe por tipo
+        "conferência de Ildeu de Castro Moreira",
+        None,
+        "conferencia",
+        ["ildeu"],
+        True,
+    ),
     ("pessoa_coordenadora", "Ana Paula da Silva UFF cotas", None, None, ["ana paula"], True),
     # --- 5. logística / participação ---
     ("log_local", "onde acontece o evento local e mapa", None, None, ["gragoata"], False),
@@ -166,8 +184,8 @@ def main() -> None:
             reranker=reranker,
         )
         lat.append((time.perf_counter() - t0) * 1000)
-        negative = name.startswith("neg_") or not expected
-        r = _rank(hits, expected) if expected else (1 if hits else None)
+        negative = name.startswith("neg_")  # falha se os termos PROIBIDOS aparecerem
+        r = _rank(hits, expected)
         ok = (r is None) if negative else (r is not None)
         if estrutural and r:
             estrutura_n += 1
@@ -184,8 +202,8 @@ def main() -> None:
 
     graded = [
         r
-        for (n, _, _, _, exp, _), r in zip(SCENARIOS, ranks, strict=False)
-        if exp and not n.startswith("neg_")
+        for (n, _, _, _, _, _), r in zip(SCENARIOS, ranks, strict=False)
+        if not n.startswith("neg_")
     ]
     hit1 = sum(1 for r in graded if r == 1)
     hit3 = sum(1 for r in graded if r and r <= 3)
