@@ -512,8 +512,10 @@ def create_app(
             query,
             t0,
             len(out),
-            dia=dia,
-            tipo=tipo,
+            source="sbpc",
+            date_from=d,
+            date_to=d,
+            tipo=t,
             top_results=[{"doc_id": r["doc_id"], "score": r["score"]} for r in out[:3]],
         )
         return out

@@ -144,6 +144,23 @@ def _resultado(querylog, client, collection, encoder, reranker, qid: int) -> dic
                 }
                 for r in res
             ]
+        elif tool == "sbpc":
+            if encoder is None:
+                out["erro"] = "encoder indisponível — não é possível re-executar buscas"
+                return out
+            res = retrieve(
+                client, collection, encoder, q,
+                limit=10, source="sbpc", date_from=df, date_to=dt,
+                tipo=row.get("tipo") or None, reranker=reranker,
+            )
+            out["results"] = [
+                {
+                    "numero": r.title, "source": r.source, "publish_date": r.publish_date,
+                    "url": r.url, "score": round(float(r.score), 3), "doc_id": r.doc_id,
+                    "snippet": mask_cpf(snippet_around(r.text, q)),
+                }
+                for r in res
+            ]
         elif tool == "dossie":
             d = dossier(client, collection, q, source=source or "boletim")
             for nivel in ("confirmados", "provaveis"):
@@ -355,7 +372,7 @@ _PAGE = r"""<!doctype html>
 
 <script>
 const SERIES=['--s1','--s2','--s3','--s4','--s5','--s6','--s7','--s8'];
-const TOOLCLR={search:'--s1',dossie:'--s2',get_documento:'--s3',info:'--s5'};
+const TOOLCLR={search:'--s1',dossie:'--s2',get_documento:'--s3',info:'--s5',sbpc:'--s4'};
 const cvar=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 let state={offset:0,limit:25,agent:'',tool:''};

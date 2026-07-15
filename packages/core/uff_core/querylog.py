@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS queries (
     source       TEXT,
     date_from    TEXT,
     date_to      TEXT,
+    tipo         TEXT,
     n_results    INTEGER,
     latency_ms   INTEGER,
     top_results  TEXT NOT NULL DEFAULT '[]',
@@ -53,6 +54,7 @@ _FIELDS = (
     "source",
     "date_from",
     "date_to",
+    "tipo",
     "n_results",
     "latency_ms",
     "top_results",
@@ -66,6 +68,11 @@ class QueryLog:
         conn = self._connect()
         try:
             conn.executescript(_SCHEMA)
+            # migração: bases criadas antes da coluna `tipo` (filtro da tool sbpc)
+            try:
+                conn.execute("ALTER TABLE queries ADD COLUMN tipo TEXT")
+            except sqlite3.OperationalError:
+                pass  # coluna já existe
             conn.commit()
         finally:
             conn.close()
