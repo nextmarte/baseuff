@@ -53,9 +53,13 @@ BASE_PORTAL = "https://portal.sbpcnet.org.br"
 BASE_UFF_SBPC = "https://sbpc.uff.br"
 UA = "BaseUFF-crawler/1.0 (UFF academic research; contact marcusantonio@id.uff.br)"
 
-# Hosts com cadeia TLS incompleta (falta o certificado intermediário): só nesses dois o
-# client é verify=False; todos os demais usam verificação normal.
-HOSTS_TLS_QUEBRADO = ("ra.sbpcnet.org.br", "reunioes2.sbpcnet.org.br")
+# Hosts da SBPC com cadeia TLS incompleta (falta o certificado intermediário): só nesses o
+# client é verify=False; todos os demais (uff.br, jornaldaciencia) usam verificação normal.
+HOSTS_TLS_QUEBRADO = (
+    "ra.sbpcnet.org.br",
+    "reunioes2.sbpcnet.org.br",
+    "portal.sbpcnet.org.br",
+)
 
 EVENTO_NOTA = (
     "78ª Reunião Anual da SBPC — UFF, Campus Gragoatá, Niterói/RJ, "
@@ -761,11 +765,11 @@ def crawl_wp_site(
     print(f"[sbpc/{nome}] FIM: {saved} novas, {upd} atualizadas, {skip} inalteradas, {err} erros")
 
 
-def crawl_portal(http_s, catalog, raw_dir, purge, force) -> None:
-    """Páginas institucionais da SBPC (lista curada; portal sem REST aberta)."""
+def crawl_portal(http_i, catalog, raw_dir, purge, force) -> None:
+    """Páginas institucionais da SBPC (lista curada; portal sem REST aberta, TLS quebrado)."""
     saved = skip = upd = err = 0
     for url in PORTAL_PAGES:
-        r = http_s.get(url)
+        r = http_i.get(url)
         if r is None or r.status_code != 200:
             print(f"[sbpc/portal] erro em {url}")
             err += 1
@@ -912,7 +916,7 @@ def main() -> None:
                 tipos=("pages", "posts"),
             )
         if args.only in (None, "portal"):
-            crawl_portal(http_s, catalog, raw_dir, purge, args.force)
+            crawl_portal(http_i, catalog, raw_dir, purge, args.force)
         if args.only in (None, "noticias"):
             crawl_noticias(http_s, http_i, catalog, raw_dir, purge, args.limit, args.force)
         if args.only in (None, "pdfs"):
