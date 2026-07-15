@@ -22,6 +22,7 @@ class Source(StrEnum):
     STI_KB = "sti_kb"
     PESQUISA = "pesquisa"
     GUIA = "guia"  # tutoriais/serviços para ALUNOS e comunidade (www.uff.br: servico/faq/diploma)
+    SBPC = "sbpc"  # 78ª Reunião Anual da SBPC na UFF (programação, evento) + SBPC institucional
 
 
 class DocStatus(StrEnum):
