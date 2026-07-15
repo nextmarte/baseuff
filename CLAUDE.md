@@ -37,7 +37,7 @@ Recuperação: híbrido (BGE-M3 denso+esparso, RRF) → **reranker em cascata** 
 cross-encoder BGE-reranker-v2-m3 finaliza). MRR 1.0 @ ~660ms. Vetores int8. Contextual Retrieval
 (prefixo de metadados no chunk).
 
-## Fontes (4 buscáveis) e natureza
+## Fontes (5 buscáveis) e natureza
 
 | source | natureza | conteúdo |
 |---|---|---|
@@ -45,16 +45,20 @@ cross-encoder BGE-reranker-v2-m3 finaliza). MRR 1.0 @ ~660ms. Vetores int8. Cont
 | `sti_kb` | tutorial | Base de Conhecimento do STI (manuais dos sistemas p/ **servidor**; OCR de telas) |
 | `pesquisa` | documento | Portal da Pesquisa (editais PIBIC/bolsas) |
 | `guia` | tutorial | Guia do Estudante/Comunidade (www.uff.br): diploma, matrícula, carteirinha, bolsas |
+| `sbpc` | evento | 78ª Reunião Anual da SBPC na UFF (26/07–01/08/2026): programação (1 doc/atividade, `publish_date` = dia), minicursos, pôsteres (PDF), notícias, SBPC institucional |
 
-`natureza` = **tutorial** (como fazer) vs **documento** (ato/registro oficial). É derivada de
-`SOURCE_KIND`/`natureza(source)` em `app.py` **em tempo de consulta** (não fica no payload do Qdrant),
-então classificar uma fonte NÃO exige re-embed.
+`natureza` = **tutorial** (como fazer) vs **documento** (ato/registro oficial) vs **evento**
+(programação/serviço de evento). É derivada de `SOURCE_KIND`/`natureza(source)` em `app.py`
+**em tempo de consulta** (não fica no payload do Qdrant), então classificar uma fonte NÃO exige re-embed.
 
 ## Tools MCP
 
-`search(query, limit, source?, date_from?, date_to?)` · `dossie(nome, source)` (exaustivo por pessoa;
-2 níveis: **confirmados** = nome contíguo, **provaveis** = tokens em ordem com lacunas) ·
-`get_documento(doc_id)` · `info()`. Doc pública em `GET /mcp` (HTML wiki) e `/mcp/docs` (JSON), sem token.
+`search(query, limit, source?, date_from?, date_to?)` · `sbpc(query, limit, dia?, tipo?)` (dedicada à
+78ª RA: filtros por dia do evento e tipo — mesa-redonda/conferencia/minicurso/noticia/…; resposta
+estruturada com horário/local/coordenador/palestrantes, via payload `tipo`+`extra`) ·
+`dossie(nome, source)` (exaustivo por pessoa; 2 níveis: **confirmados** = nome contíguo,
+**provaveis** = tokens em ordem com lacunas) · `get_documento(doc_id)` · `info()`.
+Doc pública em `GET /mcp` (HTML wiki) e `/mcp/docs` (JSON), sem token.
 
 ## Regras e pegadinhas (IMPORTANTE)
 
@@ -72,6 +76,11 @@ então classificar uma fonte NÃO exige re-embed.
   `scripts/update.py ingest()` + incluir no cron.
 - **Embed single-GPU**: use `CUDA_VISIBLE_DEVICES=1` no `run_batch`. O pool multi-GPU do FlagEmbedding
   **pendura** em lotes grandes; se travar, `pkill -f baseuff-worker/embed/[.]venv`.
+- **Fonte sbpc**: `ra.sbpcnet.org.br` e `reunioes2.sbpcnet.org.br` têm cadeia TLS incompleta —
+  `crawl_sbpc.py` usa client `verify=False` SÓ p/ esses 2 hosts. A programação MUDA até o evento:
+  `_save` compara checksum e, se doc INDEXED mudou, **purga os points no Qdrant** e rebaixa p/
+  FETCHED (senão o `run_batch` pularia pelo 1º chunk e o índice ficaria velho). O filtro `tipo` da
+  tool `sbpc` exige o índice de payload `tipo` (`scripts/reindex_payload.py`).
 - **Apache**: `sites-enabled/` são **CÓPIAS**, não symlinks — edite lá e recarregue. Deploy exposto via
   `deploy/EXPOSICAO.md`.
 - **cron tem PATH mínimo**: chame `uv` por caminho absoluto (`update.py` usa `UV = shutil.which(...)`).
@@ -88,7 +97,8 @@ então classificar uma fonte NÃO exige re-embed.
 - **Base de consultas**: `data/queries.db` (`uff_core/querylog.py`) loga cada search/dossie/get_documento
   (agente via `auth.current_agent`). Analytics: `scripts/query_stats.py [--anon]`.
 - **Chaves de agente**: `./nova-chave.sh <nome>` (hot-reload de `data/mcp_tokens.txt`, sem sudo/restart).
-- **Cron (ultron)**: diário 6h `boletim,pesquisa`; semanal dom 3h `atos,sti_kb,guia`.
+- **Cron (ultron)**: diário 6h `boletim,pesquisa,sbpc` (sbpc diário DURANTE o evento — a programação
+  muda; após 01/08/2026 mover p/ semanal); semanal dom 3h `atos,sti_kb,guia`.
 
 ## Onde as coisas vivem
 

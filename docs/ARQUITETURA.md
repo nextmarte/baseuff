@@ -48,6 +48,16 @@ Dois hosts, ligados pela rede interna da UFF:
      `faqs` (resposta limpa em `content.rendered`), `servico` (Carta de Serviços em Divi; salva a
      página e o trafilatura extrai no pipeline) e a página de diploma/formatura. Filtra conteúdo de
      **servidor** por taxonomia (`categoria-de-servico`/`faq_groups`; `SERVIDOR_KW` por nome).
+   - **sbpc** (`scripts/crawl_sbpc.py`): 7 coletores — programação científica de
+     `reunioes2.sbpcnet.org.br` (1 doc **por atividade**, fragmento HTML sintetizado com dia/
+     horário/local/pessoas; `publish_date` = dia da atividade), minicursos, REST dos WordPress
+     `ra.sbpcnet.org.br/78RA` e `sbpc.uff.br`, páginas institucionais do portal SBPC, notícias
+     (links externos da listagem da 78RA → Jornal da Ciência/www.uff.br) e PDFs (pôsteres,
+     programações temáticas). Hosts `*.sbpcnet.org.br` da RA têm cadeia TLS incompleta → client
+     `verify=False` só para eles. Como a programação muda, `_save` compara **checksum** e, se um
+     doc `INDEXED` mudou, **purga os points no Qdrant** e rebaixa a `FETCHED` (senão o `run_batch`
+     pularia o doc pelo 1º chunk). O payload ganha `title`/`orgao`/`tipo`/`extra` — a tool `sbpc`
+     filtra por `tipo` (índice keyword via `reindex_payload.py`) e devolve resposta estruturada.
 2. **Download** (`scripts/download.py`): baixa `DISCOVERED` → `data/raw/<fonte>/<id>.<ext>`,
    SHA-256, status `FETCHED`. STI KB ainda passa por `enrich_sti_kb.py` (OCR das telas).
 3. **Indexação** (`run_batch.py` no skynet01): para cada `FETCHED` do shard
@@ -116,7 +126,8 @@ resultados, latência e o topo dos resultados. `info()` (público) não é regis
 
 - **Serviços persistentes:** Qdrant (docker restart) · `baseuff-mcp` e `baseuff-encoder`
   (systemd `--user`, `loginctl enable-linger`, auto-restart + boot).
-- **Atualização automática (cron no ultron):** diário 6h `boletim,pesquisa`; semanal
+- **Atualização automática (cron no ultron):** diário 6h `boletim,pesquisa,sbpc` (sbpc diário
+  enquanto durar o evento — após 01/08/2026 mover para a semanal); semanal
   domingo 3h `atos,sti_kb,guia`. Orquestrador `scripts/update.py` (lock anti-sobreposição,
   incremental) faz descobrir→baixar→rsync→embed no skynet01→Qdrant.
   ⚠️ **cron tem PATH mínimo**: o `update.py` resolve o `uv` por caminho absoluto

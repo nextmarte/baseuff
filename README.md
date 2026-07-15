@@ -4,8 +4,9 @@ Servidor **MCP de RAG** sobre o acervo **aberto** da Universidade Federal Flumin
 Agentes de IA consultam, em linguagem natural, ~509 mil trechos indexados com citação
 rastreável (nº do documento, data, URL). Em produção em `https://ultron.cid-uff.net/mcp`.
 
-**Acervo indexado (buscável):** quatro fontes, cada uma com uma **natureza** — `documento`
-(ato/registro oficial já publicado) ou `tutorial` (como fazer, passo a passo):
+**Acervo indexado (buscável):** cinco fontes, cada uma com uma **natureza** — `documento`
+(ato/registro oficial já publicado), `tutorial` (como fazer, passo a passo) ou `evento`
+(programação/serviço de evento):
 
 - **boletim** *(documento)* — Boletins de Serviço (diário oficial interno, **1996–2026**): portarias,
   nomeações, progressões/promoções, licenças, aposentadorias, diárias, resoluções, editais.
@@ -15,6 +16,12 @@ rastreável (nº do documento, data, URL). Em produção em `https://ultron.cid-
 - **guia** *(tutorial)* — Guia do Estudante e da Comunidade (www.uff.br): como emitir/obter **2ª via de
   diploma**, colação de grau, matrícula, carteirinha, bolsas/auxílios, estágios, mobilidade — a Carta
   de Serviços e o FAQ do estudante (conteúdo de servidor é filtrado por taxonomia).
+- **sbpc** *(evento)* — **78ª Reunião Anual da SBPC na UFF** (Campus Gragoatá, Niterói,
+  **26/07–01/08/2026**): programação científica completa (1 documento por atividade, com dia,
+  horário, local, coordenador e palestrantes), minicursos/webminicursos (ementa, público-alvo),
+  caderno de **pôsteres** (trabalhos com autores), trilhas temáticas (Gênero, Afro e Indígena,
+  Jovem, Cultural), serviço do evento (inscrição, hospedagem), notícias e a SBPC institucional
+  (história, estatuto, diretoria).
 
 Cada resultado traz o campo `natureza`, e a doc pública explica a distinção — para o agente saber se
 está entregando um **procedimento** (tutorial) ou um **ato oficial** (documento).
@@ -43,6 +50,10 @@ Vetores densos com **quantização int8** (RAM ~4× menor, rescoring preserva a 
 - `search(query, limit=5, source=None, date_from=None, date_to=None)` — busca por **tema**
   (híbrido + reranker), com filtros de fonte e período; retorna passagens com citação e `natureza`.
   Diversifica por documento (máx. 2 trechos do mesmo doc no top-k).
+- `sbpc(query, limit=5, dia=None, tipo=None)` — busca **dedicada à 78ª Reunião Anual da SBPC**:
+  filtros por **dia do evento** (`"2026-07-29"` ou `"29/07"`) e **tipo** (mesa-redonda, conferencia,
+  minicurso, noticia, institucional…); resposta estruturada com dia, horário, local, modalidade,
+  coordenador, palestrantes e trilha, pronta para montar roteiro de participante.
 - `dossie(nome, source="boletim")` — levantamento **exaustivo** de uma pessoa/entidade (todos os
   atos, não top-k; dedup por documento; cronológico), em **dois níveis**: `confirmados` (nome
   contíguo, alta precisão) e `provaveis` (mesmos tokens em ordem com partes no meio — recupera nomes
