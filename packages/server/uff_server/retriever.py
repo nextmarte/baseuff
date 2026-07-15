@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol
 
 from qdrant_client import QdrantClient, models
@@ -48,11 +48,15 @@ def _build_filter(
     date_from: str | None = None,
     date_to: str | None = None,
     text_match: str | None = None,
+    tipo: str | None = None,
 ) -> models.Filter | None:
-    """Filtro Qdrant combinando fonte (keyword), período (datetime) e termo (full-text)."""
+    """Filtro Qdrant combinando fonte (keyword), período (datetime), termo (full-text)
+    e tipo de conteúdo (keyword; ex.: 'mesa-redonda' na fonte sbpc)."""
     must: list[models.FieldCondition] = []
     if source:
         must.append(models.FieldCondition(key="source", match=models.MatchValue(value=source)))
+    if tipo:
+        must.append(models.FieldCondition(key="tipo", match=models.MatchValue(value=tipo)))
     if date_from or date_to:
         must.append(
             models.FieldCondition(
@@ -84,6 +88,8 @@ class SearchResult:
     publish_date: str | None
     url: str | None
     text: str
+    title: str | None = None
+    extra: dict = field(default_factory=dict)
 
     @property
     def snippet(self) -> str:
@@ -118,6 +124,8 @@ def _result(score: float, payload: dict) -> SearchResult:
         publish_date=payload.get("publish_date"),
         url=payload.get("url"),
         text=payload.get("text", ""),
+        title=payload.get("title"),
+        extra=payload.get("extra") or {},
     )
 
 
@@ -147,18 +155,19 @@ def retrieve(
     source: str | None = None,
     date_from: str | None = None,
     date_to: str | None = None,
+    tipo: str | None = None,
     k_rrf: int = 60,
     reranker=None,
     candidate_k: int | None = None,
     max_per_doc: int = 2,
 ) -> list[SearchResult]:
-    """Busca híbrida (denso+esparso, RRF) com filtros opcionais de fonte e período.
+    """Busca híbrida (denso+esparso, RRF) com filtros opcionais de fonte, período e tipo.
     Se ``reranker`` for dado, faz over-fetch de ``candidate_k`` candidatos e reordena
     pelo cross-encoder. ``max_per_doc`` diversifica: no máx. N trechos por documento."""
     fetch = candidate_k if (reranker is not None and candidate_k) else max(limit * 4, 24)
 
     qv = encoder.encode_query(query)
-    query_filter = _build_filter(source=source, date_from=date_from, date_to=date_to)
+    query_filter = _build_filter(source=source, date_from=date_from, date_to=date_to, tipo=tipo)
     dense = _leg(client, collection, qv.dense, "dense", fetch * 4, query_filter)
     sparse = _leg(
         client,

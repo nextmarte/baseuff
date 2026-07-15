@@ -7,7 +7,9 @@ cliente entenda exatamente o que a base contém e como consultá-la.
 
 from __future__ import annotations
 
+import re
 import time
+import unicodedata
 
 from fastmcp import FastMCP
 from qdrant_client import QdrantClient, models
@@ -42,41 +44,59 @@ SOURCES = {
         "prazos e setor responsável. Use para 'COMO faço X?' do estudante/comunidade "
         "(diferente do sti_kb, que é manual dos SISTEMAS para servidores)."
     ),
+    "sbpc": (
+        "78ª Reunião Anual da SBPC na UFF (Campus Gragoatá, Niterói, 26/07 a 01/08/2026) + a "
+        "SBPC institucional. Contém a PROGRAMAÇÃO CIENTÍFICA completa (mesas-redondas, "
+        "conferências, sessões especiais — cada atividade com dia, horário, local, modalidade, "
+        "coordenador e palestrantes), minicursos/webminicursos (ementa, público-alvo), caderno "
+        "de PÔSTERES (trabalhos aprovados com autores), programações temáticas (SBPC Gênero, "
+        "Afro e Indígena, Jovem, Cultural), serviço do evento (inscrição, local, hospedagem, "
+        "transporte), notícias e a SBPC em si (história, estatuto, diretoria). Prefira a tool "
+        "dedicada `sbpc(query, dia?, tipo?)`."
+    ),
 }
 
-# Natureza de cada fonte: TUTORIAL (como fazer, passo a passo) vs DOCUMENTO (ato/registro
-# oficial já publicado). O agente deve saber o que está lendo — vai em cada resultado (`natureza`).
+# Natureza de cada fonte: TUTORIAL (como fazer, passo a passo), DOCUMENTO (ato/registro
+# oficial já publicado) ou EVENTO (programação/serviço de evento). O agente deve saber o
+# que está lendo — vai em cada resultado (`natureza`).
 SOURCE_KIND = {
     "boletim": "documento",
     "resolucao": "documento",
     "pesquisa": "documento",
     "sti_kb": "tutorial",
     "guia": "tutorial",
+    "sbpc": "evento",
 }
 KIND_LABEL = {
     "tutorial": "Tutorial — passo a passo / como fazer",
     "documento": "Documento oficial — ato, registro ou edital já publicado",
+    "evento": "Evento — programação e informações de evento (atividade, dia/hora, local)",
 }
 
 
 def natureza(source: str | None) -> str:
-    """Classe do conteúdo da fonte: 'tutorial' (como fazer) ou 'documento' (ato/registro oficial)."""
+    """Classe do conteúdo da fonte: 'tutorial', 'documento' ou 'evento'."""
     return SOURCE_KIND.get(source or "", "documento")
 
 
 INSTRUCTIONS = (
     "BaseUFF: busca semântica no acervo ABERTO da Universidade Federal Fluminense (UFF).\n\n"
-    "Duas NATUREZAS de conteúdo — saiba o que está entregando ao usuário (cada resultado traz "
+    "Três NATUREZAS de conteúdo — saiba o que está entregando ao usuário (cada resultado traz "
     "o campo `natureza`):\n"
     "- **tutorial** = COMO FAZER, passo a passo (ex.: emitir diploma, usar um sistema). "
     "Responde 'como eu faço X?'.\n"
     "- **documento** = ato/registro/edital OFICIAL já publicado (o que a UFF decidiu/publicou). "
-    "Responde 'qual o ato?', 'quando?', 'quem?'. NÃO é instrução de procedimento.\n\n"
+    "Responde 'qual o ato?', 'quando?', 'quem?'. NÃO é instrução de procedimento.\n"
+    "- **evento** = programação e informações de EVENTO (atividade com dia/hora/local, "
+    "palestrantes, serviço). Responde 'o que tem no dia X?', 'quem participa?'.\n\n"
     "Fontes disponíveis (parâmetro `source` da tool `search`):\n"
     + "\n".join(f"- {k} [{natureza(k)}]: {v}" for k, v in SOURCES.items())
     + "\n\nEstratégia (qual tool usar):\n"
     "- **Como fazer algo** (diploma, matrícula, usar um sistema) → `search(query, source='sti_kb')`: "
     "conteúdo `natureza=tutorial`.\n"
+    "- **78ª Reunião Anual da SBPC** (programação por dia/tema, palestrantes, minicursos, "
+    "inscrição/local) → `sbpc(query, dia?, tipo?)`: tool DEDICADA ao evento, resultados "
+    "estruturados (dia, horário, local, coordenador, palestrantes).\n"
     "- **Tema/assunto** → `search(query, source?, date_from?, date_to?, limit)`: híbrido+reranker; "
     "fixe `source`/período quando souber (boletim domina o acervo).\n"
     "- **Todos os atos de uma PESSOA** (dossiê de progressão, histórico) → `dossie(nome, source)`: "
@@ -100,6 +120,9 @@ POSSIBILIDADES = [
     "Orientar um ALUNO/cidadão em serviços da UFF (emitir 2ª via de diploma, colação de grau, "
     "matrícula, carteirinha, bolsas, estágio) em source='guia' — passo a passo e requisitos.",
     "Consultar editais e bolsas de pesquisa (PIBIC, iniciação científica) em source='pesquisa'.",
+    "Montar o roteiro de um participante da 78ª Reunião Anual da SBPC (UFF, 26/07–01/08/2026): "
+    "programação por dia/tema, palestrantes, minicursos, pôsteres e serviço do evento — use a "
+    "tool sbpc(query, dia?, tipo?).",
     "Buscar por tema livre (ex.: 'convênio', 'afastamento no exterior') em todo o acervo.",
 ]
 
@@ -122,7 +145,37 @@ EXEMPLOS = [
         "objetivo": "edital PIBIC",
         "chamada": "search('edital PIBIC bolsa de iniciação científica', source='pesquisa')",
     },
+    {
+        "objetivo": "programação da SBPC num dia",
+        "chamada": "sbpc('inteligência artificial', dia='2026-07-29')",
+    },
+    {
+        "objetivo": "minicursos da SBPC sobre um tema",
+        "chamada": "sbpc('meio ambiente e educação', tipo='minicurso')",
+    },
 ]
+
+
+def _dia_iso(dia: str | None) -> str | None:
+    """Normaliza o dia do evento para ISO: aceita "2026-07-29", "29/07" e "29/7/2026"."""
+    if not dia:
+        return None
+    d = dia.strip()
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", d):
+        return d
+    m = re.fullmatch(r"(\d{1,2})/(\d{1,2})(?:/(\d{4}))?", d)
+    if m:
+        return f"{m.group(3) or '2026'}-{int(m.group(2)):02d}-{int(m.group(1)):02d}"
+    return d
+
+
+def _tipo_slug(tipo: str | None) -> str | None:
+    """Normaliza o tipo: sem acento, minúsculas, espaços → hífen ("Mesa Redonda" → "mesa-redonda")."""
+    if not tipo:
+        return None
+    norm = unicodedata.normalize("NFKD", tipo.lower())
+    sem_acento = "".join(c for c in norm if not unicodedata.combining(c))
+    return re.sub(r"[^a-z0-9]+", "-", sem_acento).strip("-") or None
 
 
 def build_docs(client: QdrantClient, collection: str, catalog=None) -> dict:
@@ -162,6 +215,7 @@ def build_docs(client: QdrantClient, collection: str, catalog=None) -> dict:
         "exemplos": EXEMPLOS,
         "tools": {
             "search": "search(query, limit=5, source=None, date_from=None, date_to=None) -> passagens (tema)",
+            "sbpc": "sbpc(query, limit=5, dia=None, tipo=None) -> 78ª Reunião Anual da SBPC: atividades com dia/horário/local/palestrantes",
             "dossie": "dossie(nome, source='boletim') -> confirmados + provaveis (exaustivo por pessoa)",
             "get_documento": "get_documento(doc_id) -> documento/ato inteiro",
             "info": "info() -> esta documentação + dimensão do acervo",
@@ -229,6 +283,7 @@ def render_docs_html(docs: dict) -> str:
   .pill {{ background:var(--acc); color:#fff; padding:2px 10px; border-radius:20px; font-size:13px; }}
   .kind-tutorial {{ background:#1baf7a; }}
   .kind-documento {{ background:#4a3aa7; }}
+  .kind-evento {{ background:#b45309; }}
   .meta {{ display:flex; gap:18px; flex-wrap:wrap; color:var(--mut); font-size:14px; margin-top:8px; }}
   code {{ background:var(--line); padding:2px 6px; border-radius:6px; font-size:13.5px; }}
   pre {{ background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; overflow:auto; }}
@@ -272,6 +327,11 @@ Header: Authorization: Bearer &lt;seu-token&gt;
 <div class="card"><h3><code>search(query, limit=5, source=None, date_from=None, date_to=None)</code></h3>
 <p>Busca por <b>tema</b> (denso+esparso, reranqueada por cross-encoder), com filtros de fonte e
 período. Retorna passagens com citação (doc_id, numero, data, url, snippet).</p></div>
+<div class="card"><h3><code>sbpc(query, limit=5, dia=None, tipo=None)</code></h3>
+<p>Busca <b>dedicada à 78ª Reunião Anual da SBPC</b> (UFF, Niterói, 26/07–01/08/2026): programação
+científica, minicursos, pôsteres, notícias e a SBPC institucional. Filtros por <b>dia do evento</b>
+e <b>tipo</b> (mesa-redonda, conferencia, minicurso, noticia…). Resultados estruturados com dia,
+horário, local, coordenador e palestrantes.</p></div>
 <div class="card"><h3><code>dossie(nome, source="boletim")</code></h3>
 <p><b>Levantamento exaustivo</b> por pessoa/entidade — TODOS os atos (não top-k), deduplicado por
 documento e em ordem cronológica. Ideal para dossiê de progressão/histórico.</p></div>
@@ -334,8 +394,9 @@ def create_app(
         Args:
             query: pergunta/termo em linguagem natural (pt-BR).
             limit: número máximo de passagens (padrão 5).
-            source: filtra a fonte — "boletim", "sti_kb" ou "pesquisa" (vazio = todas).
-                Como boletim domina o acervo, fixe a fonte quando souber onde procurar.
+            source: filtra a fonte — "boletim", "sti_kb", "pesquisa", "guia" ou "sbpc"
+                (vazio = todas). Como boletim domina o acervo, fixe a fonte quando souber
+                onde procurar. Para a 78ª Reunião Anual da SBPC prefira a tool `sbpc`.
             date_from / date_to: período (ISO "AAAA-MM-DD") sobre a data de publicação.
 
         Retorna [{doc_id, numero, source, publish_date, url, snippet, score}] por relevância.
@@ -373,6 +434,86 @@ def create_app(
             source=source,
             date_from=date_from,
             date_to=date_to,
+            top_results=[{"doc_id": r["doc_id"], "score": r["score"]} for r in out[:3]],
+        )
+        return out
+
+    @mcp.tool
+    def sbpc(
+        query: str,
+        limit: int = 5,
+        dia: str | None = None,
+        tipo: str | None = None,
+    ) -> list[dict]:
+        """Busca DEDICADA à 78ª Reunião Anual da SBPC (UFF, Campus Gragoatá, Niterói,
+        26/07 a 01/08/2026) e à SBPC institucional. Resultados estruturados: cada
+        atividade traz dia, horário, local, modalidade, coordenador e palestrantes.
+
+        Cobre: programação científica (mesas-redondas, conferências, sessões especiais),
+        minicursos/webminicursos (ementa, público-alvo), pôsteres (trabalhos com autores),
+        trilhas temáticas (SBPC Gênero, Afro e Indígena, Jovem, Cultural), serviço do
+        evento (inscrição, local/mapa, hospedagem, transporte), notícias e a história/
+        estrutura da SBPC. Para TODAS as participações de uma pessoa no evento, use
+        `dossie(nome, source='sbpc')`.
+
+        Args:
+            query: pergunta/termo em linguagem natural (pt-BR).
+            limit: número máximo de resultados (padrão 5).
+            dia: dia do evento — ISO "2026-07-29" ou "29/07" (26/07 a 01/08/2026). Filtra
+                a programação daquele dia; notícias publicadas na mesma data também entram
+                (desambigue com `tipo`).
+            tipo: tipo de conteúdo — "mesa-redonda", "conferencia", "sessao-especial",
+                "encontro", "assembleia", "oficina", "minicurso", "webminicurso",
+                "atividade" (solenidades/aberturas), "poster", "programacao-tematica",
+                "pagina" (serviço do evento), "institucional" (a SBPC), "noticia",
+                "documento" (normas).
+
+        Retorna [{doc_id, titulo, tipo, dia, horario, local, modalidade, coordenador,
+        palestrantes, trilha, url, snippet, score, natureza}] por relevância.
+        """
+        t0 = time.perf_counter()
+        d = _dia_iso(dia)
+        t = _tipo_slug(tipo)
+        results = retrieve(
+            client,
+            collection,
+            encoder,
+            query,
+            limit=limit,
+            source="sbpc",
+            date_from=d,
+            date_to=d,
+            tipo=t,
+            reranker=reranker,
+        )
+        out = []
+        for r in results:
+            extra = r.extra or {}
+            out.append(
+                {
+                    "doc_id": r.doc_id,
+                    "titulo": r.title,
+                    "tipo": extra.get("tipo"),
+                    "dia": r.publish_date,
+                    "horario": extra.get("horario"),
+                    "local": extra.get("local"),
+                    "modalidade": extra.get("modalidade"),
+                    "coordenador": extra.get("coordenador"),
+                    "palestrantes": extra.get("palestrantes") or extra.get("ministrantes"),
+                    "trilha": extra.get("trilha"),
+                    "url": r.url,
+                    "snippet": mask_cpf(snippet_around(r.text, query)),
+                    "score": round(r.score, 4),
+                    "natureza": natureza(r.source),
+                }
+            )
+        _record(
+            "sbpc",
+            query,
+            t0,
+            len(out),
+            dia=dia,
+            tipo=tipo,
             top_results=[{"doc_id": r["doc_id"], "score": r["score"]} for r in out[:3]],
         )
         return out
