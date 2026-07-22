@@ -24,7 +24,7 @@ import unicodedata
 
 from qdrant_client import QdrantClient
 from uff_core.config import Settings
-from uff_server.encoder import RemoteEncoder
+from uff_server.encoder import BalancedEncoder, RemoteEncoder
 from uff_server.retriever import retrieve
 
 
@@ -78,6 +78,14 @@ SCENARIOS: list[tuple[str, str, str | None, str | None, list[str], bool]] = [
         ["generativa"],
         False,
     ),
+    (
+        "minicurso_horario",  # "que horas é o minicurso X?" — horário vem do <p> sem rótulo
+        "que horas é o minicurso de IA generativa na educação básica",
+        None,
+        "minicurso",
+        ["28 a 31/07/2026", "08h00 as 09h30"],
+        False,
+    ),
     ("tipo_webminicurso", "HPLC cromatografia", None, "webminicurso", ["hplc"], False),
     ("tipo_oficina", "criação de conteúdo no TikTok", None, "oficina", ["tiktok"], True),
     # negativo: com tipo=minicurso a conferência da Marie Curie não pode aparecer
@@ -95,6 +103,23 @@ SCENARIOS: list[tuple[str, str, str | None, str | None, list[str], bool]] = [
     ("pessoa_coordenadora", "Ana Paula da Silva UFF cotas", None, None, ["ana paula"], True),
     # --- 5. logística / participação ---
     ("log_local", "onde acontece o evento local e mapa", None, None, ["gragoata"], False),
+    # mapa do evento (transcrição curada da imagem — coletor `mapa` do crawl_sbpc)
+    (
+        "log_mapa_credenciamento",
+        "onde fica o credenciamento",
+        None,
+        "pagina",
+        ["bloco e", "credenciamento"],
+        False,
+    ),
+    (
+        "log_mapa_posteres",
+        "em que bloco é a sessão de pôsteres",
+        None,
+        None,
+        ["blocos c e d"],
+        False,
+    ),
     ("log_inscricao", "como se inscrever na reunião anual", None, None, ["inscri"], False),
     ("log_hospedagem", "hospedagem alimentação e transporte", None, None, ["hospedagem"], False),
     ("log_posteres_normas", "normas para apresentação de pôster", None, None, ["poster"], False),
@@ -156,12 +181,18 @@ def main() -> None:
 
     s = Settings()
     client = QdrantClient(url=s.qdrant_url, timeout=30)
-    encoder = RemoteEncoder(s.encoder_url)
+    # UFF_ENCODER_URL aceita lista separada por vírgula (mesma convenção do serve.py)
+    urls = [u.strip() for u in s.encoder_url.split(",") if u.strip()]
+    encoder = (
+        RemoteEncoder(urls[0])
+        if len(urls) == 1
+        else BalancedEncoder([RemoteEncoder(u) for u in urls])
+    )
     reranker = None
     if not args.no_rerank:
         from uff_server.reranker import CascadeReranker, ColbertReranker, RemoteReranker
 
-        reranker = CascadeReranker(ColbertReranker(s.encoder_url), RemoteReranker(s.encoder_url))
+        reranker = CascadeReranker(ColbertReranker(urls[0]), RemoteReranker(urls[0]))
     print(f"### sbpc — casos de uso reais ({'cascata' if reranker else 'híbrido'}) ###")
 
     ranks: list[int | None] = []

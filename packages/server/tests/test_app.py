@@ -122,6 +122,7 @@ async def test_sbpc_end_to_end_campos_estruturados_e_mask_cpf():
     assert r["tipo"] == "mesa-redonda"
     assert r["dia"] == "2026-07-29"
     assert r["horario"] == "13h00 às 15h30"
+    assert r["periodo"] is None  # mesa de 1 dia; periodo é a faixa de dias de minicurso
     assert r["local"] == "Campus Gragoatá — Bloco A"
     assert r["coordenador"] == "Ana Paula da Silva (UFF)"
     assert r["palestrantes"] == ["Danieli Balbi (ALERJ)"]

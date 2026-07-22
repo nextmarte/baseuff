@@ -1,6 +1,6 @@
 """Crawler da 78ª Reunião Anual da SBPC (UFF, Niterói, 26/07–01/08/2026) + SBPC institucional.
 
-Coleta TUDO sobre a edição e sobre a própria SBPC, em sete coletores (``--only``):
+Coleta TUDO sobre a edição e sobre a própria SBPC, em oito coletores (``--only``):
 
   - programacao : reunioes2.sbpcnet.org.br/programacao/ — 1 doc POR ATIVIDADE (mesa-redonda,
                   conferência, sessão especial…), com dia/horário/modalidade/local/pessoas.
@@ -9,6 +9,8 @@ Coleta TUDO sobre a edição e sobre a própria SBPC, em sete coletores (``--onl
                   código, ministrantes, ementa e público-alvo.
   - pages78     : site oficial da edição (ra.sbpcnet.org.br/78RA, WordPress com REST aberta).
   - uffsbpc     : site da UFF para o evento (sbpc.uff.br — saúde, cultural, jovem).
+  - mapa        : mapa do evento (sbpc.uff.br/mapa-do-evento — publicado só como IMAGEM);
+                  salvamos uma transcrição textual curada da legenda (blocos e serviços).
   - portal      : páginas institucionais da SBPC (portal.sbpcnet.org.br: história, estatuto…).
   - noticias    : a listagem de notícias da 78RA agrega LINKS EXTERNOS (Jornal da Ciência,
                   www.uff.br); seguimos cada link e salvamos a matéria.
@@ -107,7 +109,51 @@ PDFS = [
         "Normas de minicursos da 78ª RA",
         "documento",
     ),
+    (
+        f"{BASE_RA}/wp-content/uploads/2025/12/1_Normas_de_inscricao_78RA.pdf",
+        "Normas de inscrição da 78ª RA",
+        "documento",
+    ),
 ]
+
+# Mapa do evento (sbpc.uff.br): publicado SÓ como imagem (jpeg, 20/07/2026), então o crawl
+# comum não traz texto buscável. A legenda transcrita abaixo vira o doc curado da página.
+# Se o coletor avisar que a imagem mudou no site, revise a transcrição.
+MAPA_URL = f"{BASE_UFF_SBPC}/mapa-do-evento/"
+MAPA_IMG_BASE = "WhatsApp-Image-2026-07-20-at-09.42.56"  # nome-base da imagem transcrita
+
+# (o quê, onde) — na direção da pergunta do usuário ("onde fica X?"), senão o chunk
+# perde para páginas inteiras que citam X (ex.: credenciamento de imprensa).
+MAPA_LEGENDA = [
+    ("Programação Científica (salas e auditórios)", "Blocos A ao P"),
+    ("Sala Executiva", "Bloco A"),
+    ("Sala de Monitoria", "Bloco B"),
+    ("Sessão de Pôsteres (JNIC)", "Blocos C e D"),
+    ("Credenciamento", "Bloco E"),
+    ("Trucks Araribóia e Área de Alimentação", "Bloco H"),
+    (
+        "SBPC Gênero, Diversidade e Equidade; SBPC Afro, Indígena e Comunidades "
+        "Tradicionais; SBPCine; Feira Solidária; Galeria de Arte; Reciclotron",
+        "IACS (Bloco J)",
+    ),
+    ("Distrito de Inovação", "Estação Cantareira"),
+    ("Sala Nelson Pereira dos Santos (SNPS)", "Reserva"),
+    ("Alojamento", "Coluni"),
+    ("Bicicletários", "Blocos A ao O"),
+]
+MAPA_ESPACOS = (
+    "Entrada Principal; Entrada Secundária; Expo T&C; SBPC Jovem; Ciência Móvel; Lounge; "
+    "Trucks Araribóia; Feira de Livros Científicos; Feira Solidária; Espaço de Cultura e "
+    "Diversidade; Palco Orla; Galeria de Arte; SBPCine; Espaço de Cuidado Infantil; "
+    "Alojamento (Coluni); Distrito de Inovação; Sala Nelson Pereira dos Santos (SNPS); "
+    "Credenciamento"
+)
+MAPA_SERVICOS = (
+    "Central de Informações e Pessoas Perdidas; Posto de Saúde; Ambulância; Promoção à "
+    "Saúde; Banheiros; Ponto de Hidratação; Central de Acessibilidade; Espaço de "
+    "Autorregulação para Pessoas Neurodivergentes; Área de Alimentação; Point do Café; "
+    "Redários; Bicicletário; Sala de Imprensa"
+)
 
 # Prefixo do título -> slug do tipo de atividade (chaves já "foldadas": sem acento, minúsculas).
 TIPOS = {
@@ -177,6 +223,9 @@ _DATA_RE = re.compile(
     re.I | re.S,
 )
 _PERIODO_RE = re.compile(r"^De\s+(\d{1,2})/(\d{1,2})/(\d{4})", re.I)
+_PERIODO_MC_RE = re.compile(
+    r"^De\s+(\d{1,2})(?:/(\d{1,2}))?(?:/(\d{4}))?\s+[aà]\s+(\d{1,2})/(\d{1,2})/(\d{4})", re.I
+)
 _FAIXA_RE = re.compile(r"das\s+(\d{1,2})h(\d{2})?\s*[àa]s?\s+(\d{1,2})h(\d{2})?", re.I)
 _HORA_RE = re.compile(r"[àa]s?\s+(\d{1,2})h(\d{2})?", re.I)
 _MC_COD_RE = re.compile(r"^(W?MC)\s*-?\s*(\d+)\s*[-–—]\s*(.+)$", re.S)
@@ -263,8 +312,10 @@ def _horario_de(trecho: str) -> str | None:
 def parse_data_horario(linha: str) -> dict | None:
     """``"Quarta-feira, 29/7/2026 - das 13h00 às 15h30"`` -> dia/dia_semana/horario.
 
-    Tolera minutos ausentes ("às 9h"), hora única ("às 17h30") e o formato de período
-    das oficinas ("De 31/7/2026 à …"). Retorna None se a linha não for de data.
+    Tolera minutos ausentes ("às 9h"), hora única ("às 17h30"), o formato de período
+    das oficinas ("De 31/7/2026 à …") e o multi-dia dos minicursos
+    ("De 28 a 31/07/2026 - das 08h00 às 09h30" -> dia/dia_fim/horario).
+    Retorna None se a linha não for de data.
     """
     t = texto(linha)
     m = _DATA_RE.match(t)
@@ -274,6 +325,22 @@ def parse_data_horario(linha: str) -> dict | None:
         except ValueError:
             return None
         return {"dia": dia, "dia_semana": m.group(1).lower(), "horario": _horario_de(m.group(5))}
+    m = _PERIODO_MC_RE.match(t)
+    if m:
+        try:
+            fim = dt.date(int(m.group(6)), int(m.group(5)), int(m.group(4)))
+            dia = dt.date(
+                int(m.group(3) or m.group(6)), int(m.group(2) or m.group(5)), int(m.group(1))
+            )
+        except ValueError:
+            return None
+        return {
+            "dia": dia,
+            "dia_fim": fim,
+            "dia_semana": None,
+            "horario": _horario_de(t),
+            "periodo": t,
+        }
     m = _PERIODO_RE.match(t)
     if m:
         try:
@@ -436,11 +503,28 @@ def parse_minicursos(html_doc: str) -> list[dict]:
         m = _MC_COD_RE.match(bruto)
         codigo, titulo = (f"{m.group(1)}-{m.group(2)}", m.group(3).strip()) if m else (None, bruto)
         campos: dict[str, str] = {}
+        quando: dict | None = None
+        quando_txt: str | None = None
         for p in ps[1:]:
-            mm = _ROTULO_RE.match(texto(p.text(deep=True)))
+            txt = texto(p.text(deep=True))
+            mm = _ROTULO_RE.match(txt)
             if mm:
                 campos[_fold(mm.group(1))] = mm.group(2).strip()
-        itens.append({"codigo": codigo, "titulo": titulo, "secao": secao, "campos": campos})
+            elif quando is None:
+                # <p> final SEM rótulo: "De 28 a 31/07/2026 - das 08h00 às 09h30"
+                q = parse_data_horario(txt)
+                if q:
+                    quando, quando_txt = q, txt
+        itens.append(
+            {
+                "codigo": codigo,
+                "titulo": titulo,
+                "secao": secao,
+                "campos": campos,
+                "quando": quando,
+                "quando_txt": quando_txt,
+            }
+        )
     return itens
 
 
@@ -453,6 +537,7 @@ def minicurso_fragment(item: dict) -> str:
     corpo += _linha("Ementa", campos.get("ementa"))
     corpo += _linha("Público-alvo", campos.get("publico-alvo") or campos.get("publico alvo"))
     corpo += _linha("Local", campos.get("local"))
+    corpo += _linha("Data e horário", item.get("quando_txt"))
     corpo += _linha("Prazo para assistir", campos.get("prazo para assistir"))
     corpo += _linha("Evento", EVENTO_NOTA)
     return _envelope(titulo, corpo)
@@ -493,6 +578,33 @@ def veiculo_de(url: str) -> str:
 
 def pagina_fragment(title: str, content_html: str) -> str:
     return _envelope(title, content_html)
+
+
+def mapa_fragment() -> str:
+    """Transcrição textual curada do mapa oficial (feita da imagem de 20/07/2026).
+
+    O resumo "onde fica" abre o corpo para cair no MESMO chunk do título (o head é o
+    trecho que melhor rankeia); o endereço fica no fim porque "R. Prof." quebra a
+    sentença no chunking e esvaziaria o chunk de cabeçalho.
+    """
+    corpo = _linha(
+        "O que é",
+        "Mapa oficial do evento no Campus Gragoatá da UFF — onde fica cada coisa: "
+        "credenciamento, salas e auditórios da programação científica, sessão de "
+        "pôsteres, área de alimentação, alojamento, posto de saúde, acessibilidade "
+        "e demais espaços e serviços",
+    )
+    for rotulo, valor in MAPA_LEGENDA:
+        corpo += _linha(rotulo, valor)
+    corpo += _linha("Espaços e atrações no mapa", MAPA_ESPACOS)
+    corpo += _linha("Serviços sinalizados no mapa", MAPA_SERVICOS)
+    corpo += _linha(
+        "Endereço",
+        "R. Prof. Marcos Waldemar de Freitas Reis - São Domingos, Niterói/RJ, 24210-201",
+    )
+    corpo += _linha("Mapa em imagem", MAPA_URL)
+    corpo += _linha("Evento", EVENTO_NOTA)
+    return _envelope("Mapa do evento — locais, blocos e serviços no Campus Gragoatá", corpo)
 
 
 # -- catálogo + Qdrant -----------------------------------------------------------------------
@@ -546,8 +658,11 @@ def _save(
 ) -> str:
     """Registra o doc e grava raw/sbpc/{id}{suffix}. Retorna 'saved'|'skip'|'updated'.
 
-    'skip'    = checksum idêntico ao já catalogado (nada a fazer; INDEXED continua INDEXED).
-    'updated' = doc já estava INDEXED e o conteúdo mudou -> purga points e volta a FETCHED.
+    'skip'    = checksum idêntico ao já catalogado (nada a fazer).
+    'updated' = o conteúdo de um doc conhecido mudou -> purga os points no Qdrant e volta a
+                FETCHED. O purge NÃO depende do status: no catálogo do ultron nada fica
+                INDEXED (o INDEXED vive na cópia do worker), e sem purge o run_batch pularia
+                o doc pela idempotência do 1º chunk — o índice ficaria com a versão velha.
     """
     dados = content.encode("utf-8") if isinstance(content, str) else content
     checksum = hashlib.sha256(dados).hexdigest()
@@ -560,12 +675,7 @@ def _save(
         and (raw_dir / f"{existente.id}{suffix}").exists()
     ):
         return "skip"
-    mudou = bool(
-        existente
-        and existente.status == DocStatus.INDEXED
-        and existente.checksum
-        and existente.checksum != checksum
-    )
+    mudou = bool(existente and existente.checksum and existente.checksum != checksum)
     doc = catalog.upsert(
         Document(
             source=Source.SBPC,
@@ -689,6 +799,12 @@ def crawl_minicursos(http_i, catalog, raw_dir, purge, limit, force) -> None:
         campos = item["campos"]
         ancora = item["codigo"] or slugify(item["titulo"])
         ministrantes = campos.get("ministrantes") or campos.get("ministrante") or ""
+        quando = item.get("quando") or {}
+        periodo = (
+            f"{quando['dia']:%d/%m} a {quando['dia_fim']:%d/%m/%Y}"
+            if quando.get("dia") and quando.get("dia_fim")
+            else None
+        )
         res = _save(
             catalog,
             raw_dir,
@@ -704,6 +820,8 @@ def crawl_minicursos(http_i, catalog, raw_dir, purge, limit, force) -> None:
                 "ministrantes": parse_pessoas(ministrantes),
                 "publico_alvo": campos.get("publico-alvo") or campos.get("publico alvo"),
                 "local": campos.get("local"),
+                "horario": quando.get("horario"),
+                "periodo": periodo,
                 "prazo": campos.get("prazo para assistir"),
             },
             force=force,
@@ -730,6 +848,8 @@ def crawl_wp_site(
             if "old" in slug:
                 continue
             link = it.get("link") or ""
+            if link.rstrip("/") == MAPA_URL.rstrip("/"):
+                continue  # mapa: só imagem — doc textual curado fica no crawl_mapa
             title = clean_title((it.get("title") or {}).get("rendered") or slug)
             content = (it.get("content") or {}).get("rendered") or ""
             if len(_texto_visivel(content)) >= 200:
@@ -763,6 +883,43 @@ def crawl_wp_site(
             if limit and saved >= limit:
                 break
     print(f"[sbpc/{nome}] FIM: {saved} novas, {upd} atualizadas, {skip} inalteradas, {err} erros")
+
+
+def crawl_mapa(http, catalog, raw_dir, purge, force) -> None:
+    """Doc curado do mapa do evento — a página oficial publica o mapa SÓ como imagem.
+
+    Também vigia a imagem no site: se trocar, loga aviso para revisar a transcrição.
+    """
+    r = http.get(MAPA_URL, retries=2)
+    if r is not None and r.status_code == 200:
+        imgs = re.findall(r'<img[^>]+src="([^"]*wp-content/uploads[^"]*)"', r.text)
+        do_mapa = [u for u in imgs if not any(p in u for p in ("logo", "rodape", "regua"))]
+        if not any(MAPA_IMG_BASE in u for u in do_mapa):
+            print(
+                f"[sbpc/mapa] AVISO: imagem do mapa mudou no site "
+                f"({do_mapa or 'nenhuma encontrada'}) — revisar a transcrição MAPA_LEGENDA",
+                flush=True,
+            )
+    res = _save(
+        catalog,
+        raw_dir,
+        purge,
+        url=MAPA_URL,
+        title="Mapa do evento — locais, blocos e serviços no Campus Gragoatá",
+        orgao="78ª RA — UFF (sbpc.uff.br)",
+        content=mapa_fragment(),
+        tipo="pagina",
+        extra={"slug": "mapa-do-evento", "site": "sbpc.uff.br"},
+        force=force,
+    )
+    if res != "skip":
+        # No catálogo do ultron nada fica INDEXED (o INDEXED vive na cópia do worker),
+        # então o purge automático do _save não dispara: purgamos explicitamente para
+        # o run_batch não pular o doc atualizado pela idempotência do 1º chunk.
+        doc = catalog.get_by_url(Source.SBPC, MAPA_URL)
+        if doc:
+            purge(doc.id)
+    print(f"[sbpc/mapa] FIM: {res}")
 
 
 def crawl_portal(http_i, catalog, raw_dir, purge, force) -> None:
@@ -863,7 +1020,16 @@ def crawl_pdfs(http_i, catalog, raw_dir, purge, force) -> None:
     print(f"[sbpc/pdfs] FIM: {saved} novos, {upd} atualizados, {skip} inalterados, {err} erros")
 
 
-COLETORES = ("programacao", "minicursos", "pages78", "uffsbpc", "portal", "noticias", "pdfs")
+COLETORES = (
+    "programacao",
+    "minicursos",
+    "pages78",
+    "uffsbpc",
+    "mapa",
+    "portal",
+    "noticias",
+    "pdfs",
+)
 
 
 def main() -> None:
@@ -915,6 +1081,8 @@ def main() -> None:
                 force=args.force,
                 tipos=("pages", "posts"),
             )
+        if args.only in (None, "mapa"):
+            crawl_mapa(http_s, catalog, raw_dir, purge, args.force)
         if args.only in (None, "portal"):
             crawl_portal(http_i, catalog, raw_dir, purge, args.force)
         if args.only in (None, "noticias"):

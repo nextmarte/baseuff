@@ -1,3 +1,4 @@
+import pytest
 from uff_server.reranker import CascadeReranker
 
 
@@ -33,3 +34,22 @@ def test_cascade_uses_colbert_to_preselect_then_cross_for_top():
 def test_cascade_empty():
     casc = CascadeReranker(FakeReranker({}), FakeReranker({}))
     assert casc.rerank("q", []) == []
+
+
+class TruncatingReranker:
+    """Simula o bug de concorrência do encoder: devolve MENOS scores que passagens."""
+
+    def rerank(self, query: str, passages: list[str]) -> list[float]:
+        return [0.5] * (len(passages) - 1)
+
+
+def test_cascade_falha_claro_se_scores_desalinhados():
+    # Encoder sem lock truncava a resposta sob concorrência -> IndexError críptico.
+    # Agora o desalinhamento vira RuntimeError com contexto (visível no querylog/journal).
+    casc = CascadeReranker(TruncatingReranker(), FakeReranker({}))
+    with pytest.raises(RuntimeError, match="colbert.*2 scores.*3 passagens"):
+        casc.rerank("q", ["a", "b", "c"])
+
+    casc2 = CascadeReranker(FakeReranker({"a": 0.9, "b": 0.8, "c": 0.7}), TruncatingReranker())
+    with pytest.raises(RuntimeError, match="cross-encoder.*2 scores.*3 passagens"):
+        casc2.rerank("q", ["a", "b", "c"])

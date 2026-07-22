@@ -460,16 +460,18 @@ def create_app(
             query: pergunta/termo em linguagem natural (pt-BR).
             limit: número máximo de resultados (padrão 5).
             dia: dia do evento — ISO "2026-07-29" ou "29/07" (26/07 a 01/08/2026). Filtra
-                a programação daquele dia; notícias publicadas na mesma data também entram
-                (desambigue com `tipo`).
+                a programação daquele dia; conteúdo multi-dia sem data própria (minicursos,
+                pôsteres, serviço do evento) continua aparecendo, e notícias publicadas na
+                mesma data também entram (desambigue com `tipo`).
             tipo: tipo de conteúdo — "mesa-redonda", "conferencia", "sessao-especial",
                 "encontro", "assembleia", "oficina", "minicurso", "webminicurso",
                 "atividade" (solenidades/aberturas), "poster", "programacao-tematica",
                 "pagina" (serviço do evento), "institucional" (a SBPC), "noticia",
                 "documento" (normas).
 
-        Retorna [{doc_id, titulo, tipo, dia, horario, local, modalidade, coordenador,
-        palestrantes, trilha, url, snippet, score, natureza}] por relevância.
+        Retorna [{doc_id, titulo, tipo, dia, horario, periodo, local, modalidade,
+        coordenador, palestrantes, trilha, url, snippet, score, natureza}] por relevância
+        (periodo = faixa de dias de minicursos/webminicursos, ex.: "28/07 a 31/07/2026").
         """
         t0 = time.perf_counter()
         d = _dia_iso(dia)
@@ -484,18 +486,25 @@ def create_app(
             date_from=d,
             date_to=d,
             tipo=t,
+            include_undated=True,  # minicursos/pôsteres/serviço são multi-dia (sem data)
+            max_per_doc=1,  # 1 atividade = 1 doc; sem repetir a mesma atividade na lista
             reranker=reranker,
         )
         out = []
         for r in results:
             extra = r.extra or {}
+            t_out = extra.get("tipo")
             out.append(
                 {
                     "doc_id": r.doc_id,
                     "titulo": r.title,
-                    "tipo": extra.get("tipo"),
-                    "dia": r.publish_date,
+                    "tipo": t_out,
+                    # páginas de serviço/institucionais herdam datas velhas do WordPress
+                    # (edições passadas) — "dia" ali é ruído, não dia de atividade
+                    "dia": None if t_out in ("pagina", "institucional") else r.publish_date,
                     "horario": extra.get("horario"),
+                    # minicursos são multi-dia (sem publish_date): o período vem do extra
+                    "periodo": extra.get("periodo"),
                     "local": extra.get("local"),
                     "modalidade": extra.get("modalidade"),
                     "coordenador": extra.get("coordenador"),

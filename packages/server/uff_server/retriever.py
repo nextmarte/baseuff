@@ -49,20 +49,28 @@ def _build_filter(
     date_to: str | None = None,
     text_match: str | None = None,
     tipo: str | None = None,
+    include_undated: bool = False,
 ) -> models.Filter | None:
     """Filtro Qdrant combinando fonte (keyword), período (datetime), termo (full-text)
-    e tipo de conteúdo (keyword; ex.: 'mesa-redonda' na fonte sbpc)."""
-    must: list[models.FieldCondition] = []
+    e tipo de conteúdo (keyword; ex.: 'mesa-redonda' na fonte sbpc).
+
+    ``include_undated``: docs SEM ``publish_date`` passam pelo filtro de período (OR).
+    Na fonte sbpc, minicursos/pôsteres/serviço são multi-dia e não têm data — um
+    filtro de dia estrito os esconderia (era a causa dos zero-resultados da tool)."""
+    must: list = []
     if source:
         must.append(models.FieldCondition(key="source", match=models.MatchValue(value=source)))
     if tipo:
         must.append(models.FieldCondition(key="tipo", match=models.MatchValue(value=tipo)))
     if date_from or date_to:
-        must.append(
-            models.FieldCondition(
-                key="publish_date", range=models.DatetimeRange(gte=date_from, lte=date_to)
-            )
+        no_periodo = models.FieldCondition(
+            key="publish_date", range=models.DatetimeRange(gte=date_from, lte=date_to)
         )
+        if include_undated:
+            sem_data = models.IsEmptyCondition(is_empty=models.PayloadField(key="publish_date"))
+            must.append(models.Filter(should=[no_periodo, sem_data]))
+        else:
+            must.append(no_periodo)
     if text_match:
         must.append(models.FieldCondition(key="text", match=models.MatchText(text=text_match)))
     return models.Filter(must=must) if must else None
@@ -156,6 +164,7 @@ def retrieve(
     date_from: str | None = None,
     date_to: str | None = None,
     tipo: str | None = None,
+    include_undated: bool = False,
     k_rrf: int = 60,
     reranker=None,
     candidate_k: int | None = None,
@@ -163,11 +172,18 @@ def retrieve(
 ) -> list[SearchResult]:
     """Busca híbrida (denso+esparso, RRF) com filtros opcionais de fonte, período e tipo.
     Se ``reranker`` for dado, faz over-fetch de ``candidate_k`` candidatos e reordena
-    pelo cross-encoder. ``max_per_doc`` diversifica: no máx. N trechos por documento."""
+    pelo cross-encoder. ``max_per_doc`` diversifica: no máx. N trechos por documento.
+    ``include_undated``: ver :func:`_build_filter` (docs sem data passam pelo período)."""
     fetch = candidate_k if (reranker is not None and candidate_k) else max(limit * 4, 24)
 
     qv = encoder.encode_query(query)
-    query_filter = _build_filter(source=source, date_from=date_from, date_to=date_to, tipo=tipo)
+    query_filter = _build_filter(
+        source=source,
+        date_from=date_from,
+        date_to=date_to,
+        tipo=tipo,
+        include_undated=include_undated,
+    )
     dense = _leg(client, collection, qv.dense, "dense", fetch * 4, query_filter)
     sparse = _leg(
         client,
@@ -191,12 +207,24 @@ def retrieve(
     if reranker is None:
         return _diversify(candidates, limit, max_per_doc)
 
+    # Cascata com first_k < limit deixaria os scores-sentinela (negativos) das posições
+    # além do topo vazarem para o cliente. Alarga o first_k desta chamada (clone; o
+    # reranker compartilhado não pode ser mutado sob concorrência) com folga de 2×:
+    # a diversificação (max_per_doc) descarta trechos do topo pontuado e, sem margem,
+    # puxaria candidatos da região sentinela para completar o limit.
+    first_k = getattr(reranker, "first_k", None)
+    if first_k is not None and limit > first_k:
+        alvo = min(len(candidates), limit * 2)
+        reranker = type(reranker)(reranker.colbert, reranker.cross, first_k=alvo)
+
     rerank_scores = reranker.rerank(query, [c.text for c in candidates])
     reranked = sorted(
         zip(candidates, rerank_scores, strict=False), key=lambda cs: cs[1], reverse=True
     )
     ranked: list[SearchResult] = []
     for cand, rs in reranked:
+        if first_k is not None and rs < 0:
+            continue  # região sentinela da cascata: nunca chega ao cliente
         cand.score = float(rs)
         ranked.append(cand)
     return _diversify(ranked, limit, max_per_doc)
