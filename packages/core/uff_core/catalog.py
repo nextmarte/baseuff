@@ -93,6 +93,11 @@ class Catalog:
         assert saved is not None  # acabou de ser inserido/atualizado
         return saved
 
+    def delete(self, doc_id: int) -> None:
+        """Remove o doc do catálogo (GC de itens que sumiram da fonte, ex.: sbpc)."""
+        self._conn.execute("DELETE FROM documents WHERE id = ?", (doc_id,))
+        self._conn.commit()
+
     def set_status(self, doc_id: int, status: DocStatus) -> None:
         self._conn.execute(
             "UPDATE documents SET status = ?, updated_at = datetime('now') WHERE id = ?",
@@ -140,6 +145,15 @@ class Catalog:
             (source.value, url),
         ).fetchone()
         return self._from_row(row) if row else None
+
+    def list_by_url_prefix(self, source: Source, prefix: str) -> list[Document]:
+        """Docs de uma fonte cuja URL começa com ``prefix`` (família de âncoras)."""
+        esc = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        rows = self._conn.execute(
+            f"SELECT {_COLUMNS} FROM documents WHERE source = ? AND url LIKE ? ESCAPE '\\'",
+            (source.value, esc + "%"),
+        ).fetchall()
+        return [self._from_row(r) for r in rows]
 
     def list_by_status(self, status: DocStatus) -> list[Document]:
         rows = self._conn.execute(

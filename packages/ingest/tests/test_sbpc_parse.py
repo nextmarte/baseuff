@@ -89,6 +89,10 @@ def test_parse_data_horario_periodo_multidia_de_minicurso():
     q = s.parse_data_horario("De 28/07/2026 à 31/07/2026 - das 08h00 às 09h30")
     assert q["dia"] == dt.date(2026, 7, 28)
     assert q["dia_fim"] == dt.date(2026, 7, 31)
+    # virada de mês: "De 29 a 01/08" começa em 29/07, não 29/08
+    q = s.parse_data_horario("De 29 a 01/08/2026 - das 08h00 às 09h30")
+    assert q["dia"] == dt.date(2026, 7, 29)
+    assert q["dia_fim"] == dt.date(2026, 8, 1)
 
 
 # -- parse_pessoas -----------------------------------------------------------------------
@@ -202,6 +206,50 @@ def test_minicurso_fragment_extraivel():
     assert "Ementa" in texto and "IA generativa" in texto
     assert "Data e horário" in texto
     assert "De 28 a 31/07/2026 - das 08h00 às 09h30" in texto
+
+
+def test_crawl_minicursos_gc_remove_orfaos_com_trava(tmp_path, monkeypatch):
+    """Minicurso que sumiu da página (cancelado/movido) é purgado do índice e do
+    catálogo — mas SÓ com a página íntegra (trava GC_MIN_MINICURSOS)."""
+    catalog = Catalog(str(tmp_path / "catalog.db"))
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    purgados: list[int] = []
+    # semeia um minicurso que NÃO existe mais na página viva
+    s._save(
+        catalog,
+        raw,
+        purgados.append,
+        url=f"{s.BASE_PROG}/programacao/mc/#MC-99",
+        title="MINICURSO CANCELADO",
+        orgao="78ª RA — Minicurso",
+        content="conteudo velho",
+        tipo="minicurso",
+    )
+    orfao = catalog.get_by_url(Source.SBPC, f"{s.BASE_PROG}/programacao/mc/#MC-99")
+    purgados.clear()
+
+    class FakeResp:
+        status_code = 200
+        text = MINICURSOS
+
+    class FakeHttp:
+        def get(self, url, **kw):
+            return FakeResp()
+
+    # fixture tem só 3 itens (< trava padrão): GC pulado, órfão sobrevive
+    s.crawl_minicursos(FakeHttp(), catalog, raw, purgados.append, limit=None, force=False)
+    assert catalog.get(orfao.id) is not None
+    assert orfao.id not in purgados
+
+    # com a trava compatível com a fixture, o órfão é purgado e removido
+    monkeypatch.setattr(s, "GC_MIN_MINICURSOS", 3)
+    s.crawl_minicursos(FakeHttp(), catalog, raw, purgados.append, limit=None, force=False)
+    assert orfao.id in purgados
+    assert catalog.get(orfao.id) is None
+    assert not (raw / f"{orfao.id}.html").exists()
+    # os vivos da página continuam no catálogo
+    assert catalog.get_by_url(Source.SBPC, f"{s.BASE_PROG}/programacao/mc/#MC-01") is not None
 
 
 def test_crawl_minicursos_grava_horario_e_periodo_no_extra(tmp_path):

@@ -89,6 +89,9 @@ Doc pública em `GET /mcp` (HTML wiki) e `/mcp/docs` (JSON), sem token.
   `max_per_doc=1` (uma atividade não repete na lista). Horário de minicurso vem do `<p>` SEM
   rótulo da página (`De 28 a 31/07/2026 - das 08h00 às 09h30`) → fragmento "Data e horário" +
   `extra.horario`/`extra.periodo` (a tool devolve `periodo`; `dia` continua null — multi-dia).
+  A URL de atividade embute dia+título+hora: item movido/cancelado deixaria doc órfão com
+  horário VELHO no índice — o `_gc_orfaos` purga o que sumiu da página viva (trava
+  `GC_MIN_*`: parse parcial nunca deleta em massa).
 - **Cascata × limit**: `CascadeReranker` marca posições além do `first_k` com scores-sentinela
   NEGATIVOS. O `retrieve` alarga o `first_k` por chamada (clone, 2× o limit) e filtra score < 0 —
   ao mexer no rerank, garanta que sentinela nunca chegue ao cliente (já vazou `-9/-10` p/ agente).

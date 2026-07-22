@@ -329,9 +329,20 @@ def parse_data_horario(linha: str) -> dict | None:
     if m:
         try:
             fim = dt.date(int(m.group(6)), int(m.group(5)), int(m.group(4)))
-            dia = dt.date(
-                int(m.group(3) or m.group(6)), int(m.group(2) or m.group(5)), int(m.group(1))
-            )
+            if m.group(2):  # início com mês próprio ("De 28/07 a 31/07/2026")
+                dia = dt.date(int(m.group(3) or m.group(6)), int(m.group(2)), int(m.group(1)))
+            else:
+                # "De 28 a 31/07/2026": início herda mês/ano do fim; se ficar DEPOIS
+                # do fim ("De 29 a 01/08/2026"), o início é do mês anterior
+                d1 = int(m.group(1))
+                ano, mes = fim.year, fim.month
+                try:
+                    dia = dt.date(ano, mes, d1)
+                except ValueError:
+                    dia = None
+                if dia is None or dia > fim:
+                    ano, mes = (ano - 1, 12) if mes == 1 else (ano, mes - 1)
+                    dia = dt.date(ano, mes, d1)
         except ValueError:
             return None
         return {
@@ -753,6 +764,33 @@ class Http:
 
 # -- coletores ---------------------------------------------------------------------------------
 
+# trava do GC: só varre órfãos com a página viva íntegra (parse parcial NUNCA deleta em massa)
+GC_MIN_ATIVIDADES = 100
+GC_MIN_MINICURSOS = 30
+
+
+def _gc_orfaos(catalog, raw_dir, purge, *, prefixo, vivos, minimo, rotulo) -> None:
+    """GC: remove docs cuja âncora sumiu da página viva (atividade movida/cancelada).
+
+    A URL de atividade embute dia+título+hora (e a de minicurso o código): quando a
+    SBPC move ou cancela um item, nasce doc novo e o ANTIGO fica órfão no índice
+    apontando dia/horário errados. Purga os points, apaga do catálogo e do raw/.
+    """
+    if len(vivos) < minimo:
+        print(f"[sbpc/{rotulo}] GC pulado: página com só {len(vivos)} itens (< {minimo})")
+        return
+    n = 0
+    for doc in catalog.list_by_url_prefix(Source.SBPC, prefixo):
+        if doc.url in vivos:
+            continue
+        purge(doc.id)
+        catalog.delete(doc.id)
+        for f in raw_dir.glob(f"{doc.id}.*"):
+            f.unlink()
+        n += 1
+    if n:
+        print(f"[sbpc/{rotulo}] GC: {n} docs órfãos removidos (fora da página atual)")
+
 
 def crawl_programacao(http_i, catalog, raw_dir, purge, limit, force) -> None:
     r = http_i.get(f"{BASE_PROG}/programacao/")
@@ -760,7 +798,8 @@ def crawl_programacao(http_i, catalog, raw_dir, purge, limit, force) -> None:
         print("[sbpc/programacao] erro ao baixar a página de programação")
         return
     saved = skip = upd = 0
-    for a in parse_programacao(r.text)[: limit or None]:
+    atividades = parse_programacao(r.text)
+    for a in atividades[: limit or None]:
         res = _save(
             catalog,
             raw_dir,
@@ -786,6 +825,15 @@ def crawl_programacao(http_i, catalog, raw_dir, purge, limit, force) -> None:
         saved += res == "saved"
         skip += res == "skip"
         upd += res == "updated"
+    _gc_orfaos(
+        catalog,
+        raw_dir,
+        purge,
+        prefixo=f"{BASE_PROG}/programacao/#",
+        vivos={atividade_url(a) for a in atividades},
+        minimo=GC_MIN_ATIVIDADES,
+        rotulo="programacao",
+    )
     print(f"[sbpc/programacao] FIM: {saved} novas, {upd} atualizadas, {skip} inalteradas")
 
 
@@ -795,7 +843,8 @@ def crawl_minicursos(http_i, catalog, raw_dir, purge, limit, force) -> None:
         print("[sbpc/minicursos] erro ao baixar a página de minicursos")
         return
     saved = skip = upd = 0
-    for item in parse_minicursos(r.text)[: limit or None]:
+    itens = parse_minicursos(r.text)
+    for item in itens[: limit or None]:
         campos = item["campos"]
         ancora = item["codigo"] or slugify(item["titulo"])
         ministrantes = campos.get("ministrantes") or campos.get("ministrante") or ""
@@ -829,6 +878,15 @@ def crawl_minicursos(http_i, catalog, raw_dir, purge, limit, force) -> None:
         saved += res == "saved"
         skip += res == "skip"
         upd += res == "updated"
+    _gc_orfaos(
+        catalog,
+        raw_dir,
+        purge,
+        prefixo=f"{BASE_PROG}/programacao/mc/#",
+        vivos={f"{BASE_PROG}/programacao/mc/#{i['codigo'] or slugify(i['titulo'])}" for i in itens},
+        minimo=GC_MIN_MINICURSOS,
+        rotulo="minicursos",
+    )
     print(f"[sbpc/minicursos] FIM: {saved} novos, {upd} atualizados, {skip} inalterados")
 
 
