@@ -1,0 +1,24 @@
+# Worker de failover do BaseUFF MCP (ver README.md ao lado para o passo a passo).
+name = "mcp"  # URL final: https://mcp.baseuff.workers.dev
+main = "worker.js"
+compatibility_date = "2026-01-01"
+
+account_id = "7257fe597e3a5509649270cbdee0e774"
+
+# `npx wrangler kv namespace create FLAGS` e cole o id aqui:
+kv_namespaces = [
+  { binding = "FLAGS", id = "37070a03cac34e7e8079ca5e746635e9" },
+]
+
+[vars]
+ORIGIN_URL = "https://ultron.cid-uff.net"
+REPLICA_URL = "https://nextmarte--baseuff-mcp.modal.run"
+ORIGIN_TIMEOUT_MS = "5000"
+
+[triggers]
+crons = ["* * * * *"]
+
+# Depois de mover o DNS de cid-uff.net para a Cloudflare (registro `ultron` A
+# 200.20.5.84 com proxy LIGADO — nuvem laranja), descomente a rota abaixo.
+# Subrequests do próprio Worker para o mesmo hostname vão direto à origem (sem loop).
+# routes = [{ pattern = "ultron.cid-uff.net/mcp*", zone_name = "cid-uff.net" }]

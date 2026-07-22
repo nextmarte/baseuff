@@ -90,3 +90,22 @@ def test_rerank_reorders_to_put_target_first(client):
     assert len(reranked) == 3
     # garante que mudou algo em relação ao baseline (o alvo subiu)
     assert plain[0].numero != "2" or reranked[0].numero == "2"
+
+
+# -- BalancedReranker --------------------------------------------------------------------
+
+
+@respx.mock(assert_all_called=False)
+def test_balanced_reranker_failover(respx_mock):
+    import httpx as _httpx
+    from uff_server.reranker import BalancedReranker, RemoteReranker
+
+    respx_mock.post("http://gpu0:8010/rerank").mock(side_effect=_httpx.ConnectError("down"))
+    vivo = respx_mock.post("http://gpu1:8011/rerank").mock(
+        return_value=_httpx.Response(200, json={"scores": [0.9, 0.1]})
+    )
+    rr = BalancedReranker([RemoteReranker("http://gpu0:8010"), RemoteReranker("http://gpu1:8011")])
+    for _ in range(2):
+        assert rr.rerank("q", ["a", "b"]) == [0.9, 0.1]
+    assert vivo.call_count == 2
+    assert rr.rerank("q", []) == []  # lista vazia não toca a rede

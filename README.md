@@ -79,10 +79,15 @@ crawl (httpx/Playwright) → parse híbrido (PyMuPDF; Docling/OCR só p/ escanea
                                      ultron              ultron          ultron / skynet01
 ```
 
-- **ultron** (sem GPU): crawler, catálogo, Qdrant (docker), servidor MCP (systemd), Apache
-  (TLS + proxy `/mcp`), cron de atualização. O MCP não usa torch — encode/rerank são remotos.
-- **skynet01** (2× RTX 3060, `cid-uff.net:22023`): indexação em batch **e** microserviço
-  online `serve_encoder.py` (`/encode`, `/rerank`, `/colbert_rerank`), systemd. skynet02 fica livre.
+- **ultron** (sem GPU): crawler, catálogo, Qdrant (docker), servidor MCP (systemd, HTTP
+  **stateless** — deploy não derruba agentes), Apache (TLS + proxy `/mcp`), cron de atualização.
+  O MCP não usa torch — encode/rerank são remotos, balanceados entre as GPUs com failover.
+- **skynet01** (2× RTX 3060, `cid-uff.net:22023`): indexação em batch **e** DOIS microserviços
+  `serve_encoder.py` (GPU 0 `:8010`, GPU 1 `:8011`; `/encode`, `/rerank`, `/colbert_rerank`),
+  systemd. skynet02 fica livre.
+- **Contingência** (queda de luz/internet na UFF): réplica **armável** na Modal (mesmo código,
+  T4 serverless, gasto zero desarmada) + failover na URL resiliente
+  `https://mcp.baseuff.workers.dev/mcp/` (Cloudflare Worker). `./scripts/replica.sh armar|desarmar`.
 
 Detalhes de topologia, fluxo de dados e operação em [`docs/ARQUITETURA.md`](docs/ARQUITETURA.md).
 
@@ -106,8 +111,10 @@ Detalhes de topologia, fluxo de dados e operação em [`docs/ARQUITETURA.md`](do
 | `scripts/crawl_citsmart.py` | crawler Playwright do STI KB (CITSmart) |
 | `scripts/crawl_guia.py` | crawler (REST WordPress) do Guia do Estudante — fonte `guia` |
 | `scripts/enrich_sti_kb.py` | OCR (RapidOCR) das telas dos tutoriais |
-| `scripts/update.py` | orquestrador **incremental** (cron): descobrir→baixar→embed no skynet01 |
-| `scripts/serve.py` | entrypoint do servidor MCP (stdio ou HTTP) |
+| `scripts/update.py` | orquestrador **incremental** (cron): descobrir→baixar→embed no skynet01→sync da réplica |
+| `scripts/serve.py` | entrypoint do servidor MCP (stdio ou HTTP stateless) |
+| `scripts/sync_replica.py` | empurra snapshot/catálogo/tokens p/ o Volume da réplica Modal (best-effort) |
+| `scripts/replica.sh` | arma/desarma a réplica de contingência (`armar [--pin]`, `desarmar`, `status`) |
 | `scripts/reindex_payload.py` | índices de payload no Qdrant (full-text, datetime, keyword) |
 | `scripts/quantize.py` | quantização int8 da coleção |
 | `scripts/query_stats.py` | analytics da base de consultas (uso, latência, lacunas) — `--anon` |

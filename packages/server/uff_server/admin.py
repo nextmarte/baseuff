@@ -51,11 +51,20 @@ def _health(client: QdrantClient, collection: str, catalog, encoder_url: str) ->
         }
     except Exception:
         pass
-    encoder = "down"
-    try:
-        r = httpx.get(encoder_url.rstrip("/") + "/healthz", timeout=2.0)
-        encoder = "ok" if r.status_code == 200 and r.json().get("ok") else "down"
-    except Exception:
+    # UFF_ENCODER_URL pode ter várias URLs (uma por GPU); reporta parcial se só parte responde.
+    urls = [u.strip() for u in encoder_url.split(",") if u.strip()]
+    vivos = 0
+    for u in urls:
+        try:
+            r = httpx.get(u.rstrip("/") + "/healthz", timeout=2.0)
+            vivos += 1 if r.status_code == 200 and r.json().get("ok") else 0
+        except Exception:
+            pass
+    if vivos == len(urls):
+        encoder = "ok"
+    elif vivos:
+        encoder = f"parcial ({vivos}/{len(urls)})"
+    else:
         encoder = "down"
     acervo = {}
     try:

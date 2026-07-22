@@ -8,6 +8,8 @@ Expõe POST /encode {"text": ...} -> {"dense": [...], "sparse_indices": [...],
 
 from __future__ import annotations
 
+import threading
+
 from fastapi import FastAPI
 from pydantic import BaseModel
 from uff_embed.embedder import Bge
@@ -16,6 +18,10 @@ from uff_embed.reranker import Reranker
 app = FastAPI(title="BaseUFF encoder+reranker")
 _bge: Bge | None = None
 _reranker: Reranker | None = None
+# FlagEmbedding NÃO é thread-safe: sob requisições concorrentes (FastAPI roda os
+# endpoints `def` em threadpool) as respostas saíam truncadas/misturadas. Um lock
+# global serializa a inferência — sem perda de vazão, a GPU já serializa de todo modo.
+_gpu_lock = threading.Lock()
 
 
 def _model() -> Bge:
@@ -48,7 +54,8 @@ def healthz() -> dict:
 
 @app.post("/encode")
 def encode(req: EncodeRequest) -> dict:
-    enc = _model().encode_query(req.text)
+    with _gpu_lock:
+        enc = _model().encode_query(req.text)
     return {
         "dense": enc.dense,
         "sparse_indices": enc.sparse_indices,
@@ -58,10 +65,12 @@ def encode(req: EncodeRequest) -> dict:
 
 @app.post("/rerank")
 def rerank(req: RerankRequest) -> dict:
-    return {"scores": _rr().scores(req.query, req.passages)}
+    with _gpu_lock:
+        return {"scores": _rr().scores(req.query, req.passages)}
 
 
 @app.post("/colbert_rerank")
 def colbert_rerank(req: RerankRequest) -> dict:
     # late-interaction (MaxSim) usando o próprio BGE-M3 já carregado (sem 2º modelo)
-    return {"scores": _model().colbert_scores(req.query, req.passages)}
+    with _gpu_lock:
+        return {"scores": _model().colbert_scores(req.query, req.passages)}

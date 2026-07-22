@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import itertools
+from collections.abc import Sequence
 from typing import Protocol
 
 import httpx
@@ -36,6 +38,33 @@ class ColbertReranker(RemoteReranker):
     endpoint = "/colbert_rerank"
 
 
+class BalancedReranker:
+    """Round-robin com failover entre rerankers remotos (par do ``BalancedEncoder``).
+
+    Divide as chamadas entre os processos de encoder/reranker (um por GPU) e, se um
+    backend cair, tenta o próximo — rajadas concorrentes não empilham numa GPU só.
+    """
+
+    def __init__(self, rerankers: Sequence[Reranker]) -> None:
+        if not rerankers:
+            raise ValueError("BalancedReranker exige ao menos um reranker")
+        self._rerankers = list(rerankers)
+        self._rodada = itertools.count()
+
+    def rerank(self, query: str, passages: list[str]) -> list[float]:
+        if not passages:
+            return []
+        inicio = next(self._rodada)
+        ultimo_erro: httpx.HTTPError | None = None
+        for i in range(len(self._rerankers)):
+            rr = self._rerankers[(inicio + i) % len(self._rerankers)]
+            try:
+                return rr.rerank(query, passages)
+            except httpx.HTTPError as exc:
+                ultimo_erro = exc
+        raise ultimo_erro
+
+
 class CascadeReranker:
     """Cascata: ColBERT (barato) pré-seleciona ``first_k``, cross-encoder finaliza esses.
     Junta a latência baixa do ColBERT com a qualidade do cross-encoder no topo.
@@ -53,9 +82,19 @@ class CascadeReranker:
         if not passages:
             return []
         col = self.colbert.rerank(query, passages)
+        if len(col) != len(passages):
+            raise RuntimeError(
+                f"colbert devolveu {len(col)} scores para {len(passages)} passagens "
+                "(resposta truncada do encoder?)"
+            )
         order = sorted(range(len(passages)), key=lambda i: col[i], reverse=True)
         top = order[: self.first_k]
         cross = self.cross.rerank(query, [passages[i] for i in top])
+        if len(cross) != len(top):
+            raise RuntimeError(
+                f"cross-encoder devolveu {len(cross)} scores para {len(top)} passagens "
+                "(resposta truncada do encoder?)"
+            )
         # Os finalizados pelo cross-encoder recebem seu score REAL (0..1, interpretável e
         # logável); os demais ficam negativos (abaixo), mantendo a ordem do ColBERT. Como
         # limit <= first_k, o cliente só vê os scores reais do cross-encoder.

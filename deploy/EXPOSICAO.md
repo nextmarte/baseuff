@@ -50,7 +50,8 @@ Config genérica (Claude Code / SDKs MCP):
 ```
 
 hermes / openclaw / qualquer outro: mesma URL, cada um com seu token. O servidor é
-agnóstico de cliente (MCP over HTTP padrão).
+agnóstico de cliente (MCP over HTTP padrão) e roda **stateless** — deploy/restart do
+serviço não derruba sessões de agentes conectados.
 
 > O conector web do claude.ai espera OAuth; para ele, evoluir do token estático para
 > OAuth (FastMCP suporta) é o próximo passo, se necessário.
@@ -59,3 +60,17 @@ agnóstico de cliente (MCP over HTTP padrão).
 Neste ultron, `sites-enabled/` contém **cópias** dos vhosts (não symlinks, fora do padrão
 Debian). Editar em `sites-available/` **não** tem efeito — editar o arquivo em
 `sites-enabled/` e recarregar. A auth Bearer é no app; use `https://ultron.cid-uff.net/mcp`.
+
+## Contingência: e se a UFF cair (luz/internet)?
+
+Existe uma réplica **armável** na Modal com o mesmo serving e os MESMOS tokens
+(ver `docs/ARQUITETURA.md` § Réplica de contingência):
+
+- **URL resiliente (recomendada p/ agentes novos):** `https://mcp.baseuff.workers.dev/mcp/` —
+  Worker da Cloudflare que repassa para a origem UFF (latência de produção) e, em outage
+  com a réplica armada, cai sozinho para a Modal. Mesmo header
+  `Authorization: Bearer <token>`. Detalhes: `deploy/cloudflare/README.md`.
+- **URL secundária direta da réplica** (quando armada): `https://nextmarte--baseuff-mcp.modal.run/mcp/`.
+- Armar/desarmar: `./scripts/replica.sh armar [--pin]` / `desarmar` (padrão: desarmada,
+  gasto zero; a flag do Worker é virada junto). Armar na véspera de dias de alta
+  demanda (ex.: semana da SBPC).

@@ -125,6 +125,18 @@ def embed(sources: list[str]) -> None:
         )
 
 
+def sync_replica() -> None:
+    """Empurra snapshot/catálogo p/ o Volume da réplica Modal (best-effort).
+
+    Nunca aborta o update: sem CLI da modal o script já sai 0; qualquer outra
+    falha (rede, Qdrant) é logada e engolida — a réplica só fica com o sync anterior.
+    """
+    try:
+        sh([UV, "run", "python", "scripts/sync_replica.py"], cwd=REPO)
+    except Exception as exc:
+        log(f"sync da réplica falhou (não-fatal): {exc}")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Atualização incremental do BaseUFF")
     ap.add_argument("--sources", required=True, help="ex.: boletim,pesquisa")
@@ -139,6 +151,7 @@ def main() -> None:
             ingest(source)
         if not args.skip_embed:
             embed([s for s in sources if s != "atos"])
+        sync_replica()
         log("fim — índice atualizado")
     finally:
         release_lock()

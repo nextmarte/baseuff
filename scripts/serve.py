@@ -19,8 +19,8 @@ from uff_core.querylog import QueryLog
 from uff_server.admin import admin_data, render_admin_html, render_logout_html, verify_basic
 from uff_server.app import build_docs, create_app, render_docs_html
 from uff_server.auth import BearerAuthMiddleware
-from uff_server.encoder import RemoteEncoder
-from uff_server.reranker import CascadeReranker, ColbertReranker, RemoteReranker
+from uff_server.encoder import BalancedEncoder, RemoteEncoder
+from uff_server.reranker import BalancedReranker, CascadeReranker, ColbertReranker, RemoteReranker
 
 
 def main() -> None:
@@ -35,12 +35,20 @@ def main() -> None:
 
     settings = Settings()
     client = QdrantClient(url=settings.qdrant_url, timeout=30)
-    encoder = RemoteEncoder(settings.encoder_url)
+    # UFF_ENCODER_URL aceita várias URLs separadas por vírgula (um processo de encoder
+    # por GPU no skynet01): com 2+, balanceia round-robin com failover — rajadas de
+    # consultas concorrentes deixam de empilhar na fila de uma GPU só.
+    urls = [u.strip() for u in settings.encoder_url.split(",") if u.strip()]
+    if len(urls) == 1:
+        encoder = RemoteEncoder(urls[0])
+        colbert, cross = ColbertReranker(urls[0]), RemoteReranker(urls[0])
+    else:
+        encoder = BalancedEncoder([RemoteEncoder(u) for u in urls])
+        colbert = BalancedReranker([ColbertReranker(u) for u in urls])
+        cross = BalancedReranker([RemoteReranker(u) for u in urls])
     # Cascata: ColBERT (rápido) pré-seleciona, cross-encoder finaliza o topo.
     # Qualidade do cross-encoder (MRR 1.0) a ~0,65s/consulta (vs ~3s só cross-encoder).
-    reranker = CascadeReranker(
-        ColbertReranker(settings.encoder_url), RemoteReranker(settings.encoder_url)
-    )
+    reranker = CascadeReranker(colbert, cross)
     catalog = Catalog(sqlite_path(settings.catalog_dsn))
     querylog = QueryLog(str(Path(settings.data_dir) / "queries.db"))
     collection = settings.qdrant_collection
@@ -71,8 +79,10 @@ def main() -> None:
                 "admin_authorized": lambda auth: verify_basic(auth, "admin", admin_hash),
             }
         # Tools protegidas por auth Bearer; documentação pública em GET /mcp/docs.
+        # stateless_http: sem sessão no servidor -> restart/deploy NÃO derruba agentes
+        # conectados ("Session terminated"); nossas tools são busca pura, sem estado.
         app = BearerAuthMiddleware(
-            mcp.http_app(),
+            mcp.http_app(stateless_http=True),
             settings.mcp_tokens_path,
             docs_provider=lambda: build_docs(client, collection, catalog),
             html_renderer=render_docs_html,

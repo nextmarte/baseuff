@@ -9,15 +9,18 @@ Dois hosts, ligados pela rede interna da UFF:
 
 - **ultron** (sem GPU, IP interno `10.171.69.1`, público `cid-uff.net`/`ultron.cid-uff.net`):
   - **Qdrant** (docker, `:6333`, `restart: unless-stopped`) — índice vetorial.
-  - **Servidor MCP** (`scripts/serve.py`, systemd `baseuff-mcp`, `127.0.0.1:8088`).
+  - **Servidor MCP** (`scripts/serve.py`, systemd `baseuff-mcp`, `127.0.0.1:8088`) em modo
+    **stateless** (`stateless_http=True`): restart/deploy NÃO derruba sessões de agentes.
   - **Apache** — TLS (Let's Encrypt) + `ProxyPass /mcp → 127.0.0.1:8088`.
-  - **cron** — `scripts/update.py` (atualização incremental).
+  - **cron** — `scripts/update.py` (atualização incremental + sync da réplica Modal).
   - Catálogo SQLite (`data/catalog.db`) e acervo bruto (`data/raw/<fonte>/`).
-  - **Não usa torch**: encode/rerank de query são chamadas HTTP ao skynet01.
+  - **Não usa torch**: encode/rerank de query são chamadas HTTP ao skynet01, balanceadas
+    entre as duas GPUs (`BalancedEncoder`/`BalancedReranker`, round-robin com failover).
 
 - **skynet01** (2× RTX 3060, `cid-uff.net:22023`, IP interno `10.171.69.10`):
-  - **`serve_encoder.py`** (systemd `baseuff-encoder`, `:8010`): microserviço FastAPI com
-    `/encode` (BGE-M3 denso+esparso), `/rerank` (cross-encoder BGE-reranker-v2-m3),
+  - **DOIS microserviços `serve_encoder.py`** (FastAPI): `baseuff-encoder` (GPU 0, `:8010`) e
+    `baseuff-encoder-gpu1` (GPU 1, `:8011`), cada um pinado via `CUDA_VISIBLE_DEVICES`.
+    Endpoints: `/encode` (BGE-M3 denso+esparso), `/rerank` (cross-encoder BGE-reranker-v2-m3),
     `/colbert_rerank` (late-interaction MaxSim, nativo do BGE-M3).
   - **Indexação em batch** (`run_batch.py`) sob demanda.
   - `skynet02` (`:22024`) fica **livre** para outros serviços do usuário.
@@ -25,15 +28,16 @@ Dois hosts, ligados pela rede interna da UFF:
 ```
                    ┌───────────────────────── ultron ─────────────────────────┐
  agentes de IA     │  Apache (443, TLS)                                        │
-   │  HTTPS+Bearer  │    └─ /mcp ─▶ MCP FastMCP (8088, systemd)                 │
+   │  HTTPS+Bearer  │    └─ /mcp ─▶ MCP FastMCP (8088, systemd, stateless)      │
    └───────────────┼────────────────┬───────────────┬────────────────────────┤
                    │                 ▼               ▼                        │
                    │            Qdrant (6333)   encode/rerank ──HTTP──┐       │
+                   │                            (balanceado 2 GPUs)  │       │
                    └────────────────────────────────────────────────┼───────┘
                                                                      ▼
                                           ┌──────────── skynet01 (2× 3060) ────────────┐
-                                          │  serve_encoder (8010): /encode /rerank      │
-                                          │                        /colbert_rerank      │
+                                          │  serve_encoder ×2: GPU0 :8010 │ GPU1 :8011  │
+                                          │    /encode /rerank /colbert_rerank          │
                                           │  run_batch.py (indexação em batch)          │
                                           └─────────────────────────────────────────────┘
 ```
@@ -48,10 +52,12 @@ Dois hosts, ligados pela rede interna da UFF:
      `faqs` (resposta limpa em `content.rendered`), `servico` (Carta de Serviços em Divi; salva a
      página e o trafilatura extrai no pipeline) e a página de diploma/formatura. Filtra conteúdo de
      **servidor** por taxonomia (`categoria-de-servico`/`faq_groups`; `SERVIDOR_KW` por nome).
-   - **sbpc** (`scripts/crawl_sbpc.py`): 7 coletores — programação científica de
+   - **sbpc** (`scripts/crawl_sbpc.py`): 8 coletores — programação científica de
      `reunioes2.sbpcnet.org.br` (1 doc **por atividade**, fragmento HTML sintetizado com dia/
      horário/local/pessoas; `publish_date` = dia da atividade), minicursos, REST dos WordPress
-     `ra.sbpcnet.org.br/78RA` e `sbpc.uff.br`, páginas institucionais do portal SBPC, notícias
+     `ra.sbpcnet.org.br/78RA` e `sbpc.uff.br`, mapa do evento (o site publica só a IMAGEM;
+     salvamos transcrição curada da legenda — blocos, espaços e serviços — com purge explícito
+     dos points ao mudar), páginas institucionais do portal SBPC, notícias
      (links externos da listagem da 78RA → Jornal da Ciência/www.uff.br) e PDFs (pôsteres,
      programações temáticas). Hosts `*.sbpcnet.org.br` da RA têm cadeia TLS incompleta → client
      `verify=False` só para eles. Como a programação muda, `_save` compara **checksum** e, se um
@@ -76,8 +82,14 @@ pula documentos cujo 1º chunk já existe no Qdrant. Reexecutar processa só o d
 1. Agente chama uma tool MCP com `Authorization: Bearer <token>`.
 2. `retriever.retrieve`: encode remoto da query → duas pernas no Qdrant (denso + esparso)
    fundidas por **RRF** → over-fetch de ~24 candidatos → **reranker em cascata**
-   (ColBERT pré-seleciona 8 → cross-encoder finaliza) → **diversificação por documento**
-   (`_diversify`, máx. 2 trechos do mesmo doc) → top-k com snippet destacado.
+   (ColBERT pré-seleciona `first_k` → cross-encoder finaliza) → **diversificação por
+   documento** (`_diversify`, máx. 2 trechos do mesmo doc; a tool `sbpc` usa 1 — uma
+   atividade não repete na lista) → top-k com snippet destacado. Pegadinhas cobertas:
+   com `limit > first_k` o `first_k` é alargado por chamada (clone, 2× o limit) e scores
+   sentinela da cascata (negativos) **nunca** chegam ao cliente; na tool `sbpc`, filtro de
+   `dia` usa `include_undated` (minicursos/pôsteres/serviço são multi-dia, sem
+   `publish_date` — um range estrito os esconderia) e `dia` sai `null` para
+   `tipo=pagina`/`institucional` (datas herdadas do WordPress de edições antigas).
 3. `dossie` não usa top-k: filtro **full-text** (MatchText) varre todo o acervo e classifica cada
    documento em **dois níveis** — `confirmados` (nome **contíguo** no texto) e `provaveis` (mesmos
    tokens em ordem com até N palavras no meio, recupera nomes compostos); dedup por documento,
@@ -135,9 +147,40 @@ resultados, latência e o topo dos resultados. `info()` (público) não é regis
   `FileNotFoundError` sob cron. Ao adicionar uma fonte, sincronize `uff_core` para o worker
   (`~/baseuff-worker/core`) antes do embed, senão `run_batch` quebra em `Source(<nova>)`.
 - **Deploy do worker:** `rsync` de `packages/embed` para `~/baseuff-worker/embed` no skynet01;
-  `systemctl --user restart baseuff-encoder`.
+  `systemctl --user restart baseuff-encoder baseuff-encoder-gpu1` (um processo por GPU:
+  `:8010` na GPU 0, `:8011` na GPU 1; o ultron balanceia com failover via `UFF_ENCODER_URL`
+  com URLs separadas por vírgula — rajada de 8 consultas paralelas caiu de 9,7s p/ 4,1s máx).
 - **Avaliação:** `uv run python scripts/eval.py [--rerank|--colbert|--cascade] [--limit N]`
   reporta hit@1/@3/@10, MRR e latência (média/mediana/max).
+
+## Réplica de contingência (Modal) — armável sob demanda
+
+Se a UFF perde luz/internet, `ultron.cid-uff.net/mcp` some da internet e **nenhum hardening
+interno resolve**. A saída é uma réplica fora da UFF com o MESMO código de serving, na Modal
+(serverless, scale-to-zero), definida em `deploy/modal/baseuff_replica.py`:
+
+- **Função `mcp` (CPU, 2 vCPU/6GB)**: Qdrant **1.18.2** (mesma versão do ultron) restaurado do
+  snapshot no Volume `baseuff-data` + FastMCP montado igual ao `scripts/serve.py` (também
+  stateless). `max_containers=1` por economia — com o MCP stateless não é mais exigência
+  de sessão; pode subir se precisar de mais vazão num outage.
+- **Classe `Encoder` (GPU T4)**: BGE-M3 + ColBERT + cross-encoder de `packages/embed`, modelos
+  **baked na imagem** (não depende do HuggingFace em runtime). **Sem URL pública** — o server
+  chama as funções GPU pela própria Modal (autenticado); ninguém de fora drena créditos por aí.
+  Qualidade idêntica à produção (mesma cascata/índice); latência quente medida ~3s/consulta
+  (3 chamadas GPU por busca com overhead de ~0,3–0,5s cada no function call da Modal) e
+  cold start medido de ~49s (restauração do snapshot de 4,4GB + boot).
+- **Sync**: `scripts/sync_replica.py` (chamado no fim do `update.py`, **best-effort/não-fatal**;
+  sem CLI da modal instalada ele pula com aviso) empurra snapshot do Qdrant + `catalog.db` +
+  `mcp_tokens.txt` + `admin_pass.hash` + `manifest.json` para o Volume. Upload não usa compute.
+- **Armar/desarmar** (`scripts/replica.sh`): DESARMADA por padrão (`modal app stop` — nada sobe
+  nem cobra; trava dura). `armar [--pin]` = `modal deploy` (+pin: 1 container quente ~US$1/h,
+  só p/ dias críticos). Armada com a UFF saudável custa ~US$0; outage real ~US$2–5/dia.
+- **Failover** (`deploy/cloudflare/`, IMPLANTADO): Worker free em
+  `https://mcp.baseuff.workers.dev/mcp/` (URL resiliente p/ agentes) tenta a origem UFF
+  (timeout 5s até os headers) e cai p/ `https://nextmarte--baseuff-mcp.modal.run`; cron de
+  1min aquece a réplica quando detecta a origem fora. O DNS do `cid-uff.net` (Route 53, gerido
+  pelo Juan) NÃO foi tocado — migrar a zona p/ a Cloudflare é upgrade futuro opcional (aí a
+  URL antiga também vira resiliente). Janela percebida de failover: ~1–2min.
 
 ## Decisões
 
@@ -146,3 +189,6 @@ resultados, latência e o topo dos resultados. `info()` (público) não é regis
 - **Encode/rerank remotos** mantêm o ultron sem torch (deploy do MCP leve e estável).
 - **Cascata ColBERT→cross-encoder**: qualidade do cross-encoder (MRR 1.0) a ~0,66s/consulta,
   4,8× mais rápido que reranquear 80 candidatos direto no cross-encoder (~3,2s).
+- **Réplica Modal armável, nunca sempre-ligada**: os créditos (US$250) não podem ser drenados
+  por standby — app parado por padrão + spending cap no workspace; armar só em dias de alta
+  demanda (ex.: semana da SBPC 26/07–01/08/2026).
