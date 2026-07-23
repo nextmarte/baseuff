@@ -236,7 +236,9 @@ def render_docs_html(docs: dict) -> str:
 
     acervo = docs.get("acervo", {})
     tam = docs.get("tamanho", {})
-    base_url = "https://ultron.cid-uff.net/mcp"
+    # URL resiliente (Worker Cloudflare com failover automático p/ réplica Modal):
+    # é a que os agentes DEVEM usar — a direta ultron.cid-uff.net some se a UFF cair.
+    base_url = "https://mcp.baseuff.workers.dev/mcp"
 
     def esc(x) -> str:
         return _h.escape(str(x if x is not None else "—"))

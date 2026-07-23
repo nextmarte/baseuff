@@ -22,7 +22,9 @@ from qdrant_client import QdrantClient
 from .pii import mask_cpf
 from .retriever import dossier, get_document, retrieve, snippet_around
 
-BASE_URL = "https://ultron.cid-uff.net/mcp"
+# URL resiliente (Worker com failover automático) — chaves novas saem com ela;
+# a URL direta ultron.cid-uff.net fica indisponível se a UFF perder luz/internet.
+BASE_URL = "https://mcp.baseuff.workers.dev/mcp"
 _NOME_RE = re.compile(r"^[A-Za-z0-9._-]{2,32}$")
 
 
@@ -85,7 +87,10 @@ def criar_chave(tokens_path: str | None, nome: str) -> dict:
     if not tokens_path:
         return {"ok": False, "erro": "gestão de chaves indisponível neste servidor"}
     if not _NOME_RE.match(nome):
-        return {"ok": False, "erro": "nome inválido — use 2 a 32 caracteres [A-Za-z0-9 . _ -], sem espaços"}
+        return {
+            "ok": False,
+            "erro": "nome inválido — use 2 a 32 caracteres [A-Za-z0-9 . _ -], sem espaços",
+        }
     p = Path(tokens_path)
     existentes = set()
     if p.exists():
@@ -94,7 +99,10 @@ def criar_chave(tokens_path: str | None, nome: str) -> dict:
             if line and not line.startswith("#"):
                 existentes.add(line.split()[0].lower())
     if nome.lower() in existentes:
-        return {"ok": False, "erro": f"o agente '{nome}' já existe — escolha outro nome ou revogue antes"}
+        return {
+            "ok": False,
+            "erro": f"o agente '{nome}' já existe — escolha outro nome ou revogue antes",
+        }
     token = secrets.token_hex(32)
     p.parent.mkdir(parents=True, exist_ok=True)
     with p.open("a", encoding="utf-8") as f:
@@ -135,20 +143,39 @@ def _resultado(querylog, client, collection, encoder, reranker, qid: int) -> dic
     source = row.get("source") or None
     df = row.get("date_from") or None
     dt = row.get("date_to") or None
-    out.update({"tool": tool, "query": mask_cpf(q), "source": source, "ts": row.get("ts"), "agent": row.get("agent")})
+    out.update(
+        {
+            "tool": tool,
+            "query": mask_cpf(q),
+            "source": source,
+            "ts": row.get("ts"),
+            "agent": row.get("agent"),
+        }
+    )
     try:
         if tool == "search":
             if encoder is None:
                 out["erro"] = "encoder indisponível — não é possível re-executar buscas"
                 return out
             res = retrieve(
-                client, collection, encoder, q,
-                limit=10, source=source, date_from=df, date_to=dt, reranker=reranker,
+                client,
+                collection,
+                encoder,
+                q,
+                limit=10,
+                source=source,
+                date_from=df,
+                date_to=dt,
+                reranker=reranker,
             )
             out["results"] = [
                 {
-                    "numero": r.numero, "source": r.source, "publish_date": r.publish_date,
-                    "url": r.url, "score": round(float(r.score), 3), "doc_id": r.doc_id,
+                    "numero": r.numero,
+                    "source": r.source,
+                    "publish_date": r.publish_date,
+                    "url": r.url,
+                    "score": round(float(r.score), 3),
+                    "doc_id": r.doc_id,
                     "snippet": mask_cpf(snippet_around(r.text, q)),
                 }
                 for r in res
@@ -158,14 +185,25 @@ def _resultado(querylog, client, collection, encoder, reranker, qid: int) -> dic
                 out["erro"] = "encoder indisponível — não é possível re-executar buscas"
                 return out
             res = retrieve(
-                client, collection, encoder, q,
-                limit=10, source="sbpc", date_from=df, date_to=dt,
-                tipo=row.get("tipo") or None, reranker=reranker,
+                client,
+                collection,
+                encoder,
+                q,
+                limit=10,
+                source="sbpc",
+                date_from=df,
+                date_to=dt,
+                tipo=row.get("tipo") or None,
+                reranker=reranker,
             )
             out["results"] = [
                 {
-                    "numero": r.title, "source": r.source, "publish_date": r.publish_date,
-                    "url": r.url, "score": round(float(r.score), 3), "doc_id": r.doc_id,
+                    "numero": r.title,
+                    "source": r.source,
+                    "publish_date": r.publish_date,
+                    "url": r.url,
+                    "score": round(float(r.score), 3),
+                    "doc_id": r.doc_id,
                     "snippet": mask_cpf(snippet_around(r.text, q)),
                 }
                 for r in res
@@ -176,8 +214,11 @@ def _resultado(querylog, client, collection, encoder, reranker, qid: int) -> dic
                 for e in d.get(nivel, []):
                     out["results"].append(
                         {
-                            "nivel": nivel, "numero": e.get("numero"), "source": e.get("source"),
-                            "publish_date": e.get("publish_date"), "url": e.get("url"),
+                            "nivel": nivel,
+                            "numero": e.get("numero"),
+                            "source": e.get("source"),
+                            "publish_date": e.get("publish_date"),
+                            "url": e.get("url"),
                             "snippet": mask_cpf(e.get("snippet")),
                         }
                     )
@@ -192,8 +233,10 @@ def _resultado(querylog, client, collection, encoder, reranker, qid: int) -> dic
             if doc:
                 out["results"] = [
                     {
-                        "numero": doc.get("numero"), "source": doc.get("source"),
-                        "publish_date": doc.get("publish_date"), "url": doc.get("url"),
+                        "numero": doc.get("numero"),
+                        "source": doc.get("source"),
+                        "publish_date": doc.get("publish_date"),
+                        "url": doc.get("url"),
                         "n_chunks": doc.get("n_chunks"),
                         "snippet": mask_cpf((doc.get("texto") or "")[:1500]),
                     }
@@ -206,8 +249,16 @@ def _resultado(querylog, client, collection, encoder, reranker, qid: int) -> dic
 
 
 def admin_data(
-    querylog, client, collection, catalog, encoder_url, params: dict,
-    *, encoder=None, reranker=None, tokens_path=None,
+    querylog,
+    client,
+    collection,
+    catalog,
+    encoder_url,
+    params: dict,
+    *,
+    encoder=None,
+    reranker=None,
+    tokens_path=None,
 ) -> dict:
     """Roteia as requisições do painel: overview (default), drill-down, re-execução e nova chave."""
 

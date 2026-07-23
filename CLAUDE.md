@@ -5,8 +5,10 @@ Guia para agentes (Claude Code) trabalharem neste repositório. Leia antes de ed
 ## O que é
 
 **BaseUFF** — servidor **MCP de RAG** (retrieval-only) sobre o acervo **aberto** da UFF.
-Agentes de IA buscam ~509 mil trechos com citação rastreável. Produção em
-`https://ultron.cid-uff.net/mcp`. Workspace **UV** (Python 3.12), FastMCP, Qdrant, BGE-M3.
+Agentes de IA buscam ~509 mil trechos com citação rastreável. Produção (URL canônica p/
+agentes): `https://mcp.baseuff.workers.dev/mcp` — Worker com failover automático p/ réplica
+Modal; a direta `https://ultron.cid-uff.net/mcp` some se a UFF cair. Workspace **UV**
+(Python 3.12), FastMCP, Qdrant, BGE-M3.
 
 ## Comandos
 

@@ -2,7 +2,9 @@
 
 Servidor **MCP de RAG** sobre o acervo **aberto** da Universidade Federal Fluminense.
 Agentes de IA consultam, em linguagem natural, ~509 mil trechos indexados com citação
-rastreável (nº do documento, data, URL). Em produção em `https://ultron.cid-uff.net/mcp`.
+rastreável (nº do documento, data, URL). Em produção em `https://mcp.baseuff.workers.dev/mcp`
+(URL resiliente, com failover automático p/ réplica Modal; a direta
+`https://ultron.cid-uff.net/mcp` some se a UFF perder luz/internet).
 
 **Acervo indexado (buscável):** cinco fontes, cada uma com uma **natureza** — `documento`
 (ato/registro oficial já publicado), `tutorial` (como fazer, passo a passo) ou `evento`
