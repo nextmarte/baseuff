@@ -196,33 +196,6 @@ Os três processos co-locados numa máquina só. Diferenças vs. a topologia UFF
 `deploy/modal/baseuff_replica.py` é uma referência funcional desse serving co-locado (mesmo
 código, T4 serverless) — vale ler como especificação.
 
-### Sem GPU numa instância gratuita (t3.micro)
-
-O free tier é uma `t3.micro`/`t2.micro`: **1 vCPU, 1 GB de RAM, sem GPU**. Dá para rodar o
-serviço nela, **mas com uma ressalva dura**: o BGE-M3 + o reranker **não carregam em 1 GB**
-(o modelo sozinho passa de 1 GB, com ou sem GPU). A inferência precisa vir de fora.
-
-O que **cabe** na micro é o papel que o *ultron* já faz — o **MCP é torch-free de propósito**
-(deps: FastMCP + qdrant-client, nenhum torch), então ele serve de front e **delega** o
-encode/rerank a um encoder remoto com GPU:
-
-```dotenv
-# um host com GPU rodando serve_encoder.py: skynet01, um endpoint exposto da réplica
-# Modal, ou qualquer outro. O MCP na micro não faz inferência.
-UFF_ENCODER_URL=http://<host-com-gpu>:8010
-UFF_QDRANT_URL=http://localhost:6333
-```
-
-O Qdrant com 511k points é apertado em 1 GB: rode-o em **modo disco** (vetores/HNSW `on_disk`,
-sem `always_ram` — mais lento, mas cabe) ou aponte `UFF_QDRANT_URL` para um Qdrant remoto.
-Se a micro engasgar, uma `t3.small` (2 GB, ~US$15/mês) resolve com folga.
-
-**E rodar tudo em CPU, sem GPU nenhuma?** É possível no código (`Reranker(device="cpu")`,
-`Bge(use_fp16=False)`), mas aí o modelo exige **~8 GB de RAM (t3.large, já fora do free tier)**
-e a latência sobe para **segundos por consulta**. Ou seja: **"grátis" e "sem GPU e sem
-delegar" não coexistem** — 1 GB não segura os modelos. Ou você é grátis delegando a GPU, ou
-roda sem GPU num box maior pago.
-
 ## Desenvolvimento (TDD)
 
 ```bash
