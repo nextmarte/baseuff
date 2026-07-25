@@ -123,6 +123,79 @@ Detalhes de topologia, fluxo de dados e operação em [`docs/ARQUITETURA.md`](do
 | `scripts/eval.py` | harness de avaliação (hit@k, MRR, latência) — `--rerank/--colbert/--cascade` |
 | `nova-chave.sh` | gerar/listar/revogar chaves de agente (hot-reload, sem sudo) |
 
+## Como rodar o projeto
+
+O serving são **três processos**: o **Qdrant** (índice), o **encoder** (BGE-M3 + rerankers,
+em GPU) e o **servidor MCP**. Na UFF eles vivem em 2 hosts (ultron sem GPU + skynet01 com
+GPU), mas num box único com GPU — por exemplo uma **EC2 `g4dn.xlarge` (T4 16 GB)**, a mesma
+GPU que a réplica Modal usa — roda tudo junto.
+
+**Pré-requisitos:** Python 3.12 + [uv](https://docs.astral.sh/uv/), Docker (Qdrant) e uma GPU
+NVIDIA para o encoder (sem GPU roda em CPU, porém lento). Copie `.env.example` para `.env`.
+
+### 1. Índice vetorial (Qdrant)
+
+```bash
+docker run -d --name qdrant -p 6333:6333 \
+  -v "$PWD/qdrant_storage:/qdrant/storage" \
+  -v "$PWD/data/replica_sync:/snapshots" \
+  qdrant/qdrant:v1.18.2
+```
+
+Restaure a coleção a partir do snapshot que o `scripts/sync_replica.py` gera
+(`data/replica_sync/uff_chunks.snapshot`) — **não precisa re-indexar**:
+
+```bash
+curl -X PUT 'http://localhost:6333/collections/uff_chunks/snapshots/recover' \
+  -H 'content-type: application/json' \
+  -d '{"location":"file:///snapshots/uff_chunks.snapshot"}'
+```
+
+> Sem snapshot? Reconstrua o índice do zero com `packages/embed/run_batch.py` num host com
+> GPU (parse → chunk → embed → upsert). Ver [`docs/ARQUITETURA.md`](docs/ARQUITETURA.md).
+
+### 2. Encoder + rerankers (host com GPU)
+
+```bash
+cd packages/embed
+uv venv && uv pip install -e .          # torch/GPU isolado (não é membro do workspace)
+CUDA_VISIBLE_DEVICES=0 uv run uvicorn serve_encoder:app --host 0.0.0.0 --port 8010
+```
+
+Expõe `/encode`, `/rerank`, `/colbert_rerank`. Verifique: `curl localhost:8010/healthz`.
+
+### 3. Servidor MCP
+
+No `.env`, aponte para os dois serviços acima:
+
+```dotenv
+UFF_QDRANT_URL=http://localhost:6333
+UFF_ENCODER_URL=http://127.0.0.1:8010   # várias URLs por vírgula = balanceia entre GPUs
+```
+
+```bash
+uv sync                                        # ambiente do workspace (core/ingest/server)
+uv run python scripts/serve.py --http 8088     # HTTP (clientes remotos, auth Bearer)
+# ou, para Claude Code/Desktop local via stdio (sem auth):
+uv run python scripts/serve.py
+```
+
+Teste: `curl http://localhost:8088/mcp/docs` (doc pública, sem token). As tools exigem
+`Authorization: Bearer <token>` — gere um com `./nova-chave.sh <agente>`.
+
+### Num box único com GPU (EC2 / self-hosted)
+
+Os três processos co-locados numa máquina só. Diferenças vs. a topologia UFF de 2 hosts:
+
+- `UFF_ENCODER_URL=http://127.0.0.1:8010` — encoder é local, sem hop de rede.
+- **Uma GPU só** → um `serve_encoder` (dispensa o balanceamento `:8010,:8011`).
+- **Dados** entram pelo snapshot (passo 1), não por re-crawl.
+- Atrás de um proxy TLS (Caddy/ALB/Apache), **reescreva `Host: 127.0.0.1`**: o transporte
+  streamable-http do MCP rejeita Host que não seja localhost (senão devolve **HTTP 421**).
+
+`deploy/modal/baseuff_replica.py` é uma referência funcional desse serving co-locado (mesmo
+código, T4 serverless) — vale ler como especificação.
+
 ## Desenvolvimento (TDD)
 
 ```bash
